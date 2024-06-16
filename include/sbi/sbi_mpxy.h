@@ -53,6 +53,8 @@ enum sbi_mpxy_attr_id {
  */
 enum sbi_mpxy_msgproto_id {
 	SBI_MPXY_MSGPROTO_RPMI_ID = 0x0,
+	SBI_MPXY_MSGPROTO_STMM_ID = 0x1,
+	SBI_MPXY_MSGPROTO_TEE_ID = 0x2, /* riscv,sbi-mpxy-channel-id */
 };
 
 enum SBI_EXT_MPXY_SHMEM_FLAGS {
