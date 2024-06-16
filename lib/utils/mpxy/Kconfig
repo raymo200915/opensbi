@@ -22,6 +22,10 @@ config FDT_MPXY_RPMI_SYSMSI
 	bool "MPXY driver for RPMI system MSI service group"
 	default n
 
+config FDT_MPXY_OPTEED
+	bool "FDT MPXY OP-TEE secure payload dispatcher (SPD) driver"
+	default n
+
 endif
 
 endmenu
