@@ -214,6 +214,7 @@ enum rpmi_servicegroup_id {
 	RPMI_SRVGRP_HSM = 0x0005,
 	RPMI_SRVGRP_CPPC = 0x0006,
 	RPMI_SRVGRP_CLOCK = 0x0008,
+	RPMI_SRVGRP_REQFWD = 0x000D,
 	RPMI_SRVGRP_ID_MAX_COUNT,
 
 	/* Reserved range for service groups */
@@ -699,6 +700,44 @@ struct rpmi_clock_get_rate_resp {
 	s32 status;
 	u32 clock_rate_low;
 	u32 clock_rate_high;
+};
+
+/** RPMI Request Forward ServiceGroup Service IDs */
+enum rpmi_reqfwd_service_id {
+	RPMI_REQFWD_SRV_ENABLE_NOTIFICATION = 0x01,
+	RPMI_REQFWD_SRV_RETRIEVE_CURRENT_MESSAGE = 0x02,
+	RPMI_REQFWD_SRV_COMPLETE_CURRENT_MESSAGE = 0x03,
+	RPMI_REQFWD_SRV_MAX_COUNT,
+};
+
+struct rpmi_reqfwd_enable_notification_req {
+	u32 event_id;
+	u32 req_state;
+};
+
+struct rpmi_reqfwd_enable_notification_resp {
+	s32 status;
+	u32 current_state;
+};
+
+struct rpmi_reqfwd_retrieve_current_message_req {
+	u32 start_index;
+};
+
+struct rpmi_reqfwd_retrieve_current_message_resp {
+	s32 status;
+	u32 remaining;
+	u32 returned;
+	/* remaining space need to be adjusted for the above 3 u32's */
+	u8 request_message[RPMI_MSG_DATA_SIZE(RPMI_SLOT_SIZE_MIN) - (sizeof(u32) * 3)];
+};
+
+struct rpmi_reqfwd_complete_current_message_req {
+	u8 response_data[RPMI_MSG_DATA_SIZE(RPMI_SLOT_SIZE_MIN)];
+};
+
+struct rpmi_reqfwd_complete_current_message_resp {
+	s32 status;
 };
 
 #endif /* !__RPMI_MSGPROT_H__ */
