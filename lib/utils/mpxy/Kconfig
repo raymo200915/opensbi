@@ -12,6 +12,10 @@ config FDT_MPXY_RPMI_MBOX
 	depends on FDT_MAILBOX && FDT_MPXY
 	default n
 
+config FDT_MPXY_MM
+	bool "MPXY driver for RPMI MM service group"
+	default n
+
 config FDT_MPXY_REQFWD
 	bool "MPXY driver for RPMI Request Forward service group"
 	default n

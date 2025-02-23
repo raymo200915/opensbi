@@ -215,6 +215,7 @@ enum rpmi_servicegroup_id {
 	RPMI_SRVGRP_HSM = 0x0005,
 	RPMI_SRVGRP_CPPC = 0x0006,
 	RPMI_SRVGRP_CLOCK = 0x0008,
+	RPMI_SRVGRP_MM = 0x000B,
 	RPMI_SRVGRP_REQFWD = 0x000D,
 	RPMI_SRVGRP_ID_MAX_COUNT,
 
@@ -700,6 +701,44 @@ struct rpmi_clock_get_rate_resp {
 	s32 status;
 	u32 clock_rate_low;
 	u32 clock_rate_high;
+};
+
+/** RPMI MM ServiceGroup Service IDs */
+enum rpmi_mm_service_id {
+	RPMI_MM_SRV_ENABLE_NOTIFICATION = 0x01,
+	RPMI_MM_SRV_GET_ATTRIBUTES = 0x02,
+	RPMI_MM_SRV_COMMUNICATE = 0x03,
+	RPMI_MM_SRV_MAX_COUNT,
+};
+
+struct rpmi_mm_enable_notification_req {
+	u32 event_id;
+	u32 req_state;
+};
+
+struct rpmi_mm_enable_notification_resp {
+	s32 status;
+	u32 current_state;
+};
+
+struct rpmi_mm_get_attributes_resp {
+	s32 status;
+	u32 mm_version;
+	u32 mm_shmem_addr_low;
+	u32 mm_shmem_addr_high;
+	u32 mm_shmem_size;
+};
+
+struct rpmi_mm_communicate_req {
+	u32 mm_comm_input_data_offset;
+	u32 mm_comm_input_data_size;
+	u32 mm_comm_output_data_offset;
+	u32 mm_comm_output_data_size;
+};
+
+struct rpmi_mm_communicate_resp {
+	s32 status;
+	u32 mm_comm_return_data_size;
 };
 
 /** RPMI Request Forward ServiceGroup Service IDs */
