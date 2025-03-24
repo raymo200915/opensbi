@@ -12,6 +12,7 @@
 
 #include <sbi/sbi_list.h>
 
+struct sbi_domain;
 struct sbi_scratch;
 
 #define SBI_MPXY_MSGPROTO_VERSION(Major, Minor) ((Major << 16) | Minor)
@@ -181,5 +182,20 @@ int sbi_mpxy_send_message(u32 channel_id, u8 msg_id,
 /** Get Message proxy notification events */
 int sbi_mpxy_get_notification_events(u32 channel_id,
 					unsigned long *events_len);
+
+/**
+ * Get per-domain MPXY state pointer for a given domain and HART index
+ * @param dom pointer to domain
+ * @param hartindex the HART index
+ *
+ * @return per-domain MPXY state pointer for given HART index
+ */
+struct mpxy_state *sbi_domain_get_mpxy_state(struct sbi_domain *dom,
+					     u32 hartindex);
+
+/** Macro to obtain the current hart's MPXY state pointer in current domain */
+#define sbi_domain_mpxy_state_thishart_ptr()			\
+	sbi_domain_get_mpxy_state(sbi_domain_thishart_ptr(),	\
+				  current_hartindex())
 
 #endif
