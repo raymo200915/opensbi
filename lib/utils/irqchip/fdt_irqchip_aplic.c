@@ -15,12 +15,15 @@
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/irqchip/fdt_irqchip.h>
 #include <sbi_utils/irqchip/aplic.h>
+#include <sbi/sbi_console.h>
 
 static int irqchip_aplic_cold_init(const void *fdt, int nodeoff,
 				   const struct fdt_match *match)
 {
 	int rc;
 	struct aplic_data *pd;
+
+	sbi_printf("APLIC: matched node compatible %s\n", match->compatible);
 
 	pd = sbi_zalloc(sizeof(*pd));
 	if (!pd)
@@ -30,10 +33,14 @@ static int irqchip_aplic_cold_init(const void *fdt, int nodeoff,
 	if (rc)
 		goto fail_free_data;
 
+	sbi_printf("APLIC: parsed addr=0x%lx targets_mmode=%d\n",
+		   pd->addr, pd->targets_mmode);
+
 	rc = aplic_cold_irqchip_init(pd);
 	if (rc)
 		goto fail_free_data;
 
+	sbi_printf("APLIC: irqchip_aplic_cold_init done\n");
 	return 0;
 
 fail_free_data:
