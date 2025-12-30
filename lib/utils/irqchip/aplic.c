@@ -115,6 +115,21 @@
 #define APLIC_DISABLE_ITHRESHOLD	1
 #define APLIC_ENABLE_ITHRESHOLD		0
 
+/*
+ * Minimal APLIC wired irqchip provider (IDC path).
+ *
+ * NOTE: This is intentionally minimal: claim uses CLAIMI (TOPI encoding),
+ * and completion is a no-op unless a quirk says otherwise.
+ */
+struct aplic_wired_ctx {
+	unsigned long aplic_addr;  /* MMIO base */
+	u32 num_idc;
+	u32 num_src;
+};
+
+static struct aplic_wired_ctx g_aplic_wired;
+static int g_aplic_wired_registered;
+
 static SBI_LIST_HEAD(aplic_list);
 static void aplic_writel_msicfg(struct aplic_msicfg_data *msicfg,
 				void *msicfgaddr, void *msicfgaddrH);
@@ -245,6 +260,107 @@ static int aplic_check_msicfg(struct aplic_msicfg_data *msicfg)
 	return 0;
 }
 
+static inline void *aplic_idc_base(unsigned long aplic_addr, u32 idc_index)
+{
+	return (void *)(aplic_addr + APLIC_IDC_BASE +
+			(unsigned long)idc_index * APLIC_IDC_SIZE);
+}
+
+static void aplic_wired_mask(void *ctx, u32 hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+
+	if (!w || !w->aplic_addr || !hwirq)
+		return;
+	if (hwirq > w->num_src)
+		return;
+
+	/* Disable source */
+	writel(hwirq, (void *)(w->aplic_addr + APLIC_CLRIENUM));
+}
+
+static void aplic_wired_unmask(void *ctx, u32 hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+
+	if (!w || !w->aplic_addr || !hwirq)
+		return;
+	if (hwirq > w->num_src)
+		return;
+
+	/* Enable source */
+	writel(hwirq, (void *)(w->aplic_addr + APLIC_SETIENUM));
+}
+
+static int aplic_wired_claim(void *ctx, u32 *hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+	u32 hartid = current_hartid();
+	int hidx = sbi_hartid_to_hartindex(hartid);
+	void *idc;
+	u32 v, id;
+
+	if (!w || !hwirq)
+		return SBI_EINVAL;
+
+	if (!w->aplic_addr || hidx < 0 || (u32)hidx >= w->num_idc)
+		return SBI_ENODEV;
+
+	idc = aplic_idc_base(w->aplic_addr, (u32)hidx);
+
+	/*
+	 * Read CLAIMI: returns TOPI value.
+	 * ID==0 means spurious interrupt (spec-defined).
+	 */
+	v = readl(idc + APLIC_IDC_CLAIMI); /* dequeue */
+	/*
+	 * QEMU workaround: Read CLAIMI a second time since QEMU's APLIC model
+	 * currently has a bug and may not clear pending on deassert after the
+	 * first reading.
+	 */
+	if (readl(idc + APLIC_IDC_CLAIMI) != v)
+		return SBI_ENOENT;
+
+	id = (v >> APLIC_IDC_TOPI_ID_SHIFT) & APLIC_IDC_TOPI_ID_MASK;
+
+	/* ID==0 means spurious / no pending wired interrupt */
+	if (!id)
+		return SBI_ENOENT;
+
+	/* Bound check against DT-discovered num_src */
+	if (id > w->num_src)
+		return SBI_EINVAL;
+
+	*hwirq = id;
+
+	return SBI_OK;
+}
+
+static void aplic_wired_complete(void *ctx, u32 hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+	u32 hartid = current_hartid();
+	int hidx = sbi_hartid_to_hartindex(hartid);
+	void *idc;
+
+	if (!w || !w->aplic_addr)
+		return;
+	if (hidx < 0 || (u32)hidx >= w->num_idc)
+		return;
+
+	idc = aplic_idc_base(w->aplic_addr, (u32)hidx);
+
+	/* QEMU workaround: clear pending after source deassert for level IRQ */
+	writel(hwirq, idc + APLIC_CLRIPNUM);
+}
+
+static const struct sbi_irqchip_provider_ops aplic_wired_intc_ops = {
+	.claim    = aplic_wired_claim,
+	.complete = aplic_wired_complete,
+	.mask     = aplic_wired_mask,
+	.unmask   = aplic_wired_unmask,
+};
+
 int aplic_cold_irqchip_init(struct aplic_data *aplic)
 {
 	int rc;
@@ -295,6 +411,35 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 						  SBI_DOMAIN_MEMREGION_M_WRITABLE);
 		if (rc)
 			return rc;
+	}
+
+	/*
+	 * If APLIC targets M-mode (wired via IDC), we can use sbi_intc as the
+	 * external interrupt handler. Do it once for now.
+	 *
+	 * IMPORTANT: Do NOT register a second irqchip device (avoids double
+	 * handling). Instead, redirect this APLIC irqchip's irq_handle.
+	 */
+	if (aplic->targets_mmode && !g_aplic_wired_registered) {
+		sbi_printf("M-mode: Register APLIC wired via IDC\n");
+
+		g_aplic_wired.aplic_addr = aplic->addr;
+		g_aplic_wired.num_idc    = aplic->num_idc;
+		g_aplic_wired.num_src    = aplic->num_source;
+
+		/* Register irqchip provider for wired interrupts */
+		sbi_irqchip_register_provider(&aplic_wired_intc_ops,
+					      &g_aplic_wired,
+					      g_aplic_wired.num_src);
+		/*
+		* CRITICAL:
+		* Override the irqchip handler for the *existing* root APLIC irqchip device.
+		* Otherwise OpenSBI will keep calling the original APLIC stub handler and
+		* you'll see "unhandled local interrupt (error -1000)" on MEIP.
+		*/
+		aplic->irqchip.irq_handle = sbi_irqchip_handle_external_irq;
+
+		g_aplic_wired_registered = 1;
 	}
 
 	/* Register irqchip device */
