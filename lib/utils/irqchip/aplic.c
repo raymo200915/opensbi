@@ -262,6 +262,91 @@ static int aplic_check_msicfg(struct aplic_msicfg_data *msicfg)
 	return 0;
 }
 
+#ifdef APLIC_QEMU_WIRED_TEST
+
+static int aplic_test_uart_handler(u32 hwirq, void *priv)
+{
+	volatile u8 *uart = (volatile u8 *)0x10000000UL;
+
+	/* Drain RX FIFO to clear the interrupt source */
+	while (uart[0x05] & 0x01) {        /* LSR.DR */
+		u8 ch = uart[0x00];            /* RBR */
+		sbi_printf("[INTC TEST] handled UART interrupt hwirq=%u\n", hwirq);
+		sbi_printf("[INTC TEST] UART got '%c'(0x%02x)\n",
+			   (ch >= 32 && ch < 127) ? ch : '.', ch);
+	}
+
+	/* (Optional) read IIR to acknowledge on some models */
+	(void)uart[0x02]; /* IIR is at offset 2 when DLAB=0; reading is harmless */
+
+	return SBI_OK;
+}
+
+static void aplic_wired_test_run(unsigned long aplic_addr)
+{
+	const u32 uart_irq = 10;     /* QEMU virt UART IRQ line */
+	const u32 hart_idx = 0;
+	unsigned long idc;
+	volatile u8 *uart = (volatile u8 *)0x10000000UL;
+
+	idc = aplic_addr + APLIC_IDC_BASE + hart_idx * APLIC_IDC_SIZE;
+
+	sbi_printf("\n[APLIC TEST] UART RX -> hwirq=%u\n", uart_irq);
+
+	/* Register handler */
+	sbi_intc_set_handler(uart_irq, aplic_test_uart_handler, NULL);
+
+	/* APLIC: sourcecfg/target/enable */
+	writel(APLIC_SOURCECFG_SM_LEVEL_HIGH,
+	       (void *)(aplic_addr + APLIC_SOURCECFG_BASE + (uart_irq - 1) * 4));
+
+	writel((hart_idx << APLIC_TARGET_HART_IDX_SHIFT) | APLIC_DEFAULT_PRIORITY,
+	       (void *)(aplic_addr + APLIC_TARGET_BASE + (uart_irq - 1) * 4));
+
+	writel(uart_irq, (void *)(aplic_addr + APLIC_SETIENUM));
+
+	/* Direct mode for aia=aplic: DM=0 => don't set DM bit */
+	writel(APLIC_DOMAINCFG_IE | APLIC_DOMAINCFG_BE,
+	       (void *)(aplic_addr + APLIC_DOMAINCFG));
+
+	/* IDC delivery */
+	writel(APLIC_ENABLE_IDELIVERY, (void *)(idc + APLIC_IDC_IDELIVERY));
+	writel(APLIC_ENABLE_ITHRESHOLD, (void *)(idc + APLIC_IDC_ITHRESHOLD));
+
+	/* Enable MEIE + global MIE */
+	csr_set(CSR_MIE, (1UL << 11));  /* MEIE */
+	csr_set(CSR_MSTATUS, MSTATUS_MIE);
+
+	/* UART: enable RX interrupt */
+	uart[0x02] = 0x07;          /* FCR enable+clear */
+	uart[0x04] |= (1 << 3);     /* MCR.OUT2 */
+	uart[0x01] |= 0x01;         /* IER.ERBFI */
+	while (uart[0x05] & 0x01)   /* drain */
+		(void)uart[0x00];
+
+	sbi_printf("[APLIC TEST] Setup done. Type keys now.\n");
+
+	/* Main loop: poll UART so we *see* keys, and also show MEIP/CLAIMI */
+	for (;;) {
+		if (uart[0x05] & 0x01) { /* LSR.DR */
+			u8 ch = uart[0x00]; /* RBR */
+			unsigned long mip = csr_read(CSR_MIP);
+			u32 topi  = readl((void *)(idc + APLIC_IDC_TOPI));
+			u32 claim = readl((void *)(idc + APLIC_IDC_CLAIMI));
+
+			sbi_printf("[APLIC TEST] UART got '%c'(0x%02x)\n",
+				   (ch >= 32 && ch < 127) ? ch : '.', ch);
+			sbi_printf("[APLIC TEST] mip=0x%lx (MEIP=%lu) TOPI=0x%08x CLAIMI=0x%08x\n",
+				   mip, (mip >> 11) & 1, topi, claim);
+		}
+
+		/* keep CPU low power-ish, but don't get stuck forever */
+		wfi();
+	}
+}
+
+#endif
+
 static inline void *aplic_idc_base(unsigned long aplic_addr, u32 idc_index)
 {
 	return (void *)(aplic_addr + APLIC_IDC_BASE +
@@ -419,6 +504,11 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 
 	/* Attach to the aplic list */
 	sbi_list_add_tail(&aplic->node, &aplic_list);
+
+#ifdef APLIC_QEMU_WIRED_TEST
+	/* Test in M-mode before jumping to any payload */
+	aplic_wired_test_run(aplic->addr);
+#endif
 
 	return 0;
 }
