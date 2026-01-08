@@ -35,6 +35,16 @@ struct sbi_intc_provider_ops {
 	 * Some HW may not require an explicit completion.
 	 */
 	void (*complete)(void *ctx, u32 hwirq);
+
+	/*
+	 * Optional: mask/unmask a wired interrupt line.
+	 *
+	 * These are required for reliable couriering of level-triggered device
+	 * interrupts to S-mode: mask in M-mode before enqueueing, and unmask
+	 * after S-mode has cleared the device interrupt source.
+	 */
+	void (*mask)(void *ctx, u32 hwirq);
+	void (*unmask)(void *ctx, u32 hwirq);
 };
 
 /*
@@ -46,7 +56,8 @@ int sbi_intc_register_provider(const struct sbi_intc_provider_ops *ops,
 
 int sbi_intc_set_handler(u32 hwirq, sbi_intc_irq_handler_t handler, void *priv);
 int sbi_intc_clear_handler(u32 hwirq);
-
+void sbi_intc_mask_irq(u32 hwirq);
+void sbi_intc_unmask_irq(u32 hwirq);
 /* Can be used as OpenSBI "external interrupt handler" (irqchip device hook) */
 int sbi_intc_handle_external_irq(void);
 

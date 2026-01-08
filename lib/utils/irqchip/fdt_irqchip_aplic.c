@@ -10,17 +10,14 @@
 
 #include <libfdt.h>
 #include <sbi/riscv_asm.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/irqchip/fdt_irqchip.h>
 #include <sbi_utils/irqchip/aplic.h>
-#include <sbi/sbi_console.h>
-#ifdef APLIC_QEMU_WIRED_TEST
-#include <libfdt.h>
-#endif
 
-#ifdef APLIC_QEMU_WIRED_TEST
+#ifdef APLIC_M_MODE_TEST //APLIC_QEMU_WIRED_TEST
 
 static int force_uart_parent_to_root(void *fdt, u32 root_phandle)
 {
@@ -153,7 +150,6 @@ static int init_root_aplic_once(void *fdt)
 	sbi_printf("APLIC TEST: root aplic init done\n");
 	return 0;
 }
-
 #endif
 
 static int irqchip_aplic_cold_init(const void *fdt, int nodeoff,
@@ -164,7 +160,7 @@ static int irqchip_aplic_cold_init(const void *fdt, int nodeoff,
 
 	sbi_printf("APLIC: matched node compatible %s\n", match->compatible);
 
-#ifdef APLIC_QEMU_WIRED_TEST
+#ifdef APLIC_M_MODE_TEST //APLIC_QEMU_WIRED_TEST
 	/*
 	 * IMPORTANT:
 	 * Even if the framework only calls us for the child domain,

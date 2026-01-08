@@ -12,8 +12,9 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
-#include <sbi_utils/irqchip/aplic.h>
 #include <sbi/sbi_intc.h>
+#include <sbi/sbi_virq.h>
+#include <sbi_utils/irqchip/aplic.h>
 
 #define APLIC_MAX_IDC			(1UL << 14)
 #define APLIC_MAX_SOURCE		1024
@@ -131,7 +132,9 @@ struct aplic_wired_ctx {
 
 static struct aplic_wired_ctx g_aplic_wired;
 static int g_aplic_wired_registered;
-
+#ifndef APLIC_M_MODE_TEST
+extern struct sbi_domain root;
+#endif
 static SBI_LIST_HEAD(aplic_list);
 static void aplic_writel_msicfg(struct aplic_msicfg_data *msicfg,
 				void *msicfgaddr, void *msicfgaddrH);
@@ -264,6 +267,7 @@ static int aplic_check_msicfg(struct aplic_msicfg_data *msicfg)
 
 #ifdef APLIC_QEMU_WIRED_TEST
 
+#ifdef APLIC_M_MODE_TEST
 static int aplic_test_uart_handler(u32 hwirq, void *priv)
 {
 	volatile u8 *uart = (volatile u8 *)0x10000000UL;
@@ -281,6 +285,7 @@ static int aplic_test_uart_handler(u32 hwirq, void *priv)
 
 	return SBI_OK;
 }
+#endif
 
 static void aplic_wired_test_run(unsigned long aplic_addr)
 {
@@ -293,8 +298,16 @@ static void aplic_wired_test_run(unsigned long aplic_addr)
 
 	sbi_printf("\n[APLIC TEST] UART RX -> hwirq=%u\n", uart_irq);
 
+#ifdef APLIC_M_MODE_TEST
 	/* Register handler */
 	sbi_intc_set_handler(uart_irq, aplic_test_uart_handler, NULL);
+#else
+	/*
+	 * QEMU virt 16550 UART is usually wired to a specific APLIC source.
+	 * Replace UART_HWIRQ (10) with the actual wired hwirq number from your DT/QEMU.
+	 */
+	sbi_virq_bind_hwirq_to_domain(uart_irq, &root);
+#endif
 
 	/* APLIC: sourcecfg/target/enable */
 	writel(APLIC_SOURCECFG_SM_LEVEL_HIGH,
@@ -321,6 +334,7 @@ static void aplic_wired_test_run(unsigned long aplic_addr)
 	uart[0x02] = 0x07;          /* FCR enable+clear */
 	uart[0x04] |= (1 << 3);     /* MCR.OUT2 */
 	uart[0x01] |= 0x01;         /* IER.ERBFI */
+#ifdef APLIC_M_MODE_TEST
 	while (uart[0x05] & 0x01)   /* drain */
 		(void)uart[0x00];
 
@@ -343,6 +357,7 @@ static void aplic_wired_test_run(unsigned long aplic_addr)
 		/* keep CPU low power-ish, but don't get stuck forever */
 		wfi();
 	}
+#endif
 }
 
 #endif
@@ -411,11 +426,40 @@ static void aplic_wired_complete(void *ctx, u32 hwirq)
 
 	idc = aplic_idc_base(w->aplic_addr, (u32)hidx);
 	writel((hwirq << APLIC_IDC_TOPI_ID_SHIFT), idc + APLIC_IDC_CLAIMI);
+	sbi_printf("[INTC] complete hwirq=%u\n", hwirq);
+}
+
+static void aplic_wired_mask(void *ctx, u32 hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+
+	if (!w || !w->aplic_addr || !hwirq)
+		return;
+	if (hwirq > w->num_src)
+		return;
+
+	/* Disable source */
+	writel(hwirq, (void *)(w->aplic_addr + APLIC_CLRIENUM));
+}
+
+static void aplic_wired_unmask(void *ctx, u32 hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+
+	if (!w || !w->aplic_addr || !hwirq)
+		return;
+	if (hwirq > w->num_src)
+		return;
+
+	/* Enable source */
+	writel(hwirq, (void *)(w->aplic_addr + APLIC_SETIENUM));
 }
 
 static const struct sbi_intc_provider_ops aplic_wired_intc_ops = {
 	.claim    = aplic_wired_claim,
 	.complete = aplic_wired_complete,
+	.mask     = aplic_wired_mask,
+	.unmask   = aplic_wired_unmask,
 };
 
 int aplic_cold_irqchip_init(struct aplic_data *aplic)
@@ -483,6 +527,7 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 		g_aplic_wired.aplic_addr = aplic->addr;
 		g_aplic_wired.num_idc    = aplic->num_idc;
 		g_aplic_wired.num_src    = aplic->num_source;
+		g_aplic_wired.quirk_claimi_writeback = true;
 
 		/* Register INTC provider for wired interrupts (claim/complete via IDC.CLAIMI) */
 		sbi_intc_register_provider(&aplic_wired_intc_ops,

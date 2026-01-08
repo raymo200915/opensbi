@@ -402,6 +402,9 @@ CFLAGS		+=	$(firmware-cflags-y)
 ifeq ($(APLIC_QEMU_WIRED_TEST),y)
 CFLAGS		+= -DAPLIC_QEMU_WIRED_TEST
 endif
+ifeq ($(APLIC_COURIER_PENDING_QUEUE_TEST),y)
+CFLAGS		+= -DAPLIC_COURIER_PENDING_QUEUE_TEST
+endif
 
 CPPFLAGS	+=	$(GENFLAGS)
 CPPFLAGS	+=	$(platform-cppflags-y)
