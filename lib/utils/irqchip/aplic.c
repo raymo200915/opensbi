@@ -12,8 +12,8 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
-#include <sbi_utils/irqchip/aplic.h>
 #include <sbi/sbi_intc.h>
+#include <sbi_utils/irqchip/aplic.h>
 
 #define APLIC_MAX_IDC			(1UL << 14)
 #define APLIC_MAX_SOURCE		1024
