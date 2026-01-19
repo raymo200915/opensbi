@@ -126,6 +126,32 @@
 #define SBI_EXT_FWFT_SET		0x0
 #define SBI_EXT_FWFT_GET		0x1
 
+#ifdef CONFIG_SBI_ECALL_VIRQ
+
+/* Vendor extension base range is defined by the SBI spec. Choose a private ID. */
+#define SBI_EXT_VIRQ			0x0900524d
+
+/* Function IDs for SBI_EXT_VIRQ */
+#define SBI_EXT_VIRQ_POP		0
+#define SBI_EXT_VIRQ_COMPLETE		1
+
+/*
+ * SBI_EXT_VIRQ_POP
+ * Returns:
+ *   a0: SBI error code (0 for success)
+ *   a1: next pending VIRQ (0 if none pending)
+ */
+
+/*
+ * SBI_EXT_VIRQ_COMPLETE
+ * Input:
+ *   a0: VIRQ to complete
+ * Returns:
+ *   a0: SBI error code (0 for success)
+ */
+
+#endif
+
 enum sbi_fwft_feature_t {
 	SBI_FWFT_MISALIGNED_EXC_DELEG		= 0x0,
 	SBI_FWFT_LANDING_PAD			= 0x1,
