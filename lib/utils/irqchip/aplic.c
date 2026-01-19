@@ -332,6 +332,32 @@ static inline void *aplic_idc_base(unsigned long aplic_addr, u32 idc_index)
 			(unsigned long)idc_index * APLIC_IDC_SIZE);
 }
 
+static void aplic_wired_mask(void *ctx, u32 hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+
+	if (!w || !w->aplic_addr || !hwirq)
+		return;
+	if (hwirq > w->num_src)
+		return;
+
+	/* Disable source */
+	writel(hwirq, (void *)(w->aplic_addr + APLIC_CLRIENUM));
+}
+
+static void aplic_wired_unmask(void *ctx, u32 hwirq)
+{
+	struct aplic_wired_ctx *w = ctx;
+
+	if (!w || !w->aplic_addr || !hwirq)
+		return;
+	if (hwirq > w->num_src)
+		return;
+
+	/* Enable source */
+	writel(hwirq, (void *)(w->aplic_addr + APLIC_SETIENUM));
+}
+
 static int aplic_wired_claim(void *ctx, u32 *hwirq)
 {
 	struct aplic_wired_ctx *w = ctx;
@@ -403,6 +429,8 @@ static void aplic_wired_complete(void *ctx, u32 hwirq)
 static const struct sbi_intc_provider_ops aplic_wired_intc_ops = {
 	.claim    = aplic_wired_claim,
 	.complete = aplic_wired_complete,
+	.mask     = aplic_wired_mask,
+	.unmask   = aplic_wired_unmask,
 };
 
 int aplic_cold_irqchip_init(struct aplic_data *aplic)
