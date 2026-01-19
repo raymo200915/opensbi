@@ -95,6 +95,34 @@ int sbi_intc_clear_handler(u32 hwirq)
 	return SBI_OK;
 }
 
+void sbi_intc_mask_irq(u32 hwirq)
+{
+	const struct sbi_intc_provider_ops *ops = g_provider.ops;
+	void *ctx = g_provider.ctx;
+	u32 max_hwirq = g_provider.max_hwirq;
+
+	if (!ops || !ops->mask)
+		return;
+	if (!hwirq || hwirq > max_hwirq || hwirq >= SBI_INTC_MAX_HWIRQS)
+		return;
+
+	ops->mask(ctx, hwirq);
+}
+
+void sbi_intc_unmask_irq(u32 hwirq)
+{
+	const struct sbi_intc_provider_ops *ops = g_provider.ops;
+	void *ctx = g_provider.ctx;
+	u32 max_hwirq = g_provider.max_hwirq;
+
+	if (!ops || !ops->unmask)
+		return;
+	if (!hwirq || hwirq > max_hwirq || hwirq >= SBI_INTC_MAX_HWIRQS)
+		return;
+
+	ops->unmask(ctx, hwirq);
+}
+
 int sbi_intc_handle_external_irq(void)
 {
 	const struct sbi_intc_provider_ops *ops;
@@ -126,16 +154,10 @@ int sbi_intc_handle_external_irq(void)
 
 		sbi_printf("[INTC] claim hwirq=%u\n", hwirq);
 
-		if (hwirq > max_hwirq || hwirq >= SBI_INTC_MAX_HWIRQS) {
+		if (!hwirq || hwirq > max_hwirq || hwirq >= SBI_INTC_MAX_HWIRQS) {
 			/* Provider returned an out-of-range hwirq; avoid MMIO corruption */
 			sbi_printf("[INTC] invalid wired IRQ %u (max %u)", hwirq, max_hwirq);
 			break;
-		}
-
-		if (!hwirq || hwirq > max_hwirq || hwirq >= SBI_INTC_MAX_HWIRQS) {
-			/* Complete anyway to avoid stuck IRQs */
-			ops->complete(ctx, hwirq);
-			continue;
 		}
 
 		/* Snapshot handler without locking; writes only happen at init */

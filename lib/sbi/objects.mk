@@ -64,6 +64,9 @@ libsbi-objs-$(CONFIG_SBI_ECALL_SSE) += sbi_ecall_sse.o
 carray-sbi_ecall_exts-$(CONFIG_SBI_ECALL_MPXY) += ecall_mpxy
 libsbi-objs-$(CONFIG_SBI_ECALL_MPXY) += sbi_ecall_mpxy.o
 
+carray-sbi_ecall_exts-$(CONFIG_SBI_ECALL_VIRQ) += ecall_virq
+libsbi-objs-$(CONFIG_SBI_ECALL_VIRQ) += sbi_ecall_virq.o
+
 libsbi-objs-y += sbi_bitmap.o
 libsbi-objs-y += sbi_bitops.o
 libsbi-objs-y += sbi_console.o
@@ -103,3 +106,4 @@ libsbi-objs-y += sbi_unpriv.o
 libsbi-objs-y += sbi_expected_trap.o
 libsbi-objs-y += sbi_cppc.o
 libsbi-objs-y += sbi_intc.o
+libsbi-objs-y += sbi_virq.o

@@ -196,6 +196,7 @@ struct sbi_domain {
 	bool system_suspend_allowed;
 	/** Identifies whether to include the firmware region */
 	bool fw_region_inited;
+	void *virq_priv; /* per-domain wired-IRQ courier state */
 };
 
 /** The root domain instance */
