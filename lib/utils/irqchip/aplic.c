@@ -12,6 +12,7 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_virq.h>
 #include <sbi_utils/irqchip/aplic.h>
 
 #define APLIC_MAX_IDC			(1UL << 14)
@@ -129,6 +130,9 @@ struct aplic_wired_ctx {
 
 static struct aplic_wired_ctx g_aplic_wired;
 static int g_aplic_wired_registered;
+#ifdef APLIC_COURIER_TEST
+extern struct sbi_domain root;
+#endif
 
 static SBI_LIST_HEAD(aplic_list);
 static void aplic_writel_msicfg(struct aplic_msicfg_data *msicfg,
@@ -262,6 +266,7 @@ static int aplic_check_msicfg(struct aplic_msicfg_data *msicfg)
 
 #ifdef APLIC_QEMU_WIRED_TEST
 
+#ifndef APLIC_COURIER_TEST
 static int aplic_test_uart_handler(void *priv)
 {
 	volatile u8 *uart = (volatile u8 *)0x10000000UL;
@@ -278,6 +283,7 @@ static int aplic_test_uart_handler(void *priv)
 
 	return SBI_OK;
 }
+#endif
 
 static void aplic_wired_test_run(unsigned long aplic_addr)
 {
@@ -285,11 +291,23 @@ static void aplic_wired_test_run(unsigned long aplic_addr)
 	const u32 hart_idx = 0;
 	unsigned long idc;
 	volatile u8 *uart = (volatile u8 *)0x10000000UL;
+#ifdef APLIC_COURIER_TEST
+	const u32 virq = 1;
+#endif
 
 	idc = aplic_addr + APLIC_IDC_BASE + hart_idx * APLIC_IDC_SIZE;
 
-	/* Register handler */
+	/*
+	 * Register handler
+	 * QEMU virt 16550 UART is usually wired to a specific APLIC source.
+	 * Replace UART_HWIRQ (10) with the actual wired hwirq number from your DT/QEMU.
+	 */
+#ifdef APLIC_COURIER_TEST
+	sbi_virq_map_irq(virq, uart_irq);
+	sbi_virq_bind_irq_to_domain(virq, &root);
+#else
 	sbi_irqchip_set_handler(uart_irq, aplic_test_uart_handler, NULL);
+#endif
 
 	/* APLIC: sourcecfg/target/enable */
 	writel(APLIC_SOURCECFG_SM_LEVEL_HIGH,
@@ -316,10 +334,12 @@ static void aplic_wired_test_run(unsigned long aplic_addr)
 	uart[0x02] = 0x07;          /* FCR enable+clear */
 	uart[0x04] |= (1 << 3);     /* MCR.OUT2 */
 	uart[0x01] |= 0x01;         /* IER.ERBFI */
+#ifndef APLIC_COURIER_TEST
 	while (uart[0x05] & 0x01)   /* drain */
 		(void)uart[0x00];
 
 	sbi_printf("[APLIC TEST] Setup done. Type keys now.\n");
+#endif
 }
 
 #endif
