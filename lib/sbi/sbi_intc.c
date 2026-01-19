@@ -126,16 +126,10 @@ int sbi_intc_handle_external_irq(void)
 
 		sbi_printf("[INTC] claim hwirq=%u\n", hwirq);
 
-		if (hwirq > max_hwirq || hwirq >= SBI_INTC_MAX_HWIRQS) {
-			/* Provider returned an out-of-range hwirq; avoid MMIO corruption */
-			sbi_printf("[INTC] invalid wired IRQ %u (max %u)", hwirq, max_hwirq);
-			break;
-		}
-
 		if (!hwirq || hwirq > max_hwirq || hwirq >= SBI_INTC_MAX_HWIRQS) {
-			/* Complete anyway to avoid stuck IRQs */
-			ops->complete(ctx, hwirq);
-			continue;
+			/* Provider returned an out-of-range hwirq; avoid MMIO corruption */
+			sbi_printf("[INTC] invalid wired IRQ %u (max %u)\n", hwirq, max_hwirq);
+			break;
 		}
 
 		/* Snapshot handler without locking; writes only happen at init */
