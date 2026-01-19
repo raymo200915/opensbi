@@ -69,4 +69,9 @@ config SBI_ECALL_SSE
 config SBI_ECALL_MPXY
 	bool "MPXY extension"
 	default y
+
+config SBI_ECALL_VIRQ
+	bool "VIRQ extension"
+	default y
+
 endmenu
