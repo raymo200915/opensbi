@@ -18,6 +18,7 @@
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
+#include <sbi/sbi_virq.h>
 
 SBI_LIST_HEAD(domain_list);
 
@@ -689,6 +690,15 @@ int sbi_domain_register(struct sbi_domain *dom,
 	if (rc) {
 		sbi_printf("%s: domain data setup failed for %s (error %d)\n",
 			   __func__, dom->name, rc);
+		sbi_list_del(&dom->node);
+		return rc;
+	}
+
+	/* Init per-domain wired-IRQ courier state */
+	rc = sbi_virq_domain_init(dom);
+	if (rc) {
+		sbi_printf("%s: virq init failed for %s (error %d)\n",
+				__func__, dom->name, rc);
 		sbi_list_del(&dom->node);
 		return rc;
 	}
