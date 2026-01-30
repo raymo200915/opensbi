@@ -217,6 +217,8 @@ struct sbi_domain {
 	bool fw_region_inited;
 	/** Whether to notify S-mode for VIRQ couriering */
 	bool virq_seip_notify;
+	/** per-domain wired-IRQ courier state */
+	void *virq_priv;
 };
 
 /** The root domain instance */
