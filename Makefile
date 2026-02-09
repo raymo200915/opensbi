@@ -399,6 +399,9 @@ CFLAGS		+=	$(GENFLAGS)
 CFLAGS		+=	$(platform-cflags-y)
 CFLAGS		+=	-fPIE -pie
 CFLAGS		+=	$(firmware-cflags-y)
+ifeq ($(APLIC_QEMU_WIRED_TEST),y)
+CFLAGS		+=	-DAPLIC_QEMU_WIRED_TEST
+endif
 
 CPPFLAGS	+=	$(GENFLAGS)
 CPPFLAGS	+=	$(platform-cppflags-y)

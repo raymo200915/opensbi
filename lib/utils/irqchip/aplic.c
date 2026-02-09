@@ -119,6 +119,41 @@ static SBI_LIST_HEAD(aplic_list);
 static void aplic_writel_msicfg(struct aplic_msicfg_data *msicfg,
 				void *msicfgaddr, void *msicfgaddrH);
 
+#ifdef APLIC_QEMU_WIRED_TEST
+
+#define UART_QEMU_MMIO 0x10000000UL
+
+static void aplic_test_uart_handler(void)
+{
+	volatile u8 *uart = (volatile u8 *)UART_QEMU_MMIO;
+
+	/* Drain RX FIFO to clear the interrupt source */
+	while (uart[0x05] & 0x01) {        /* LSR.DR */
+		u8 ch = uart[0x00];            /* RBR */
+
+		sbi_printf("[APLIC TEST] UART got '%c'(0x%02x)\n",
+			   (ch >= 32 && ch < 127) ? ch : '.', ch);
+	}
+
+	/* (Optional) read IIR to acknowledge on some models */
+	(void)uart[0x02]; /* IIR is at offset 2 when DLAB=0; */
+}
+
+static void aplic_hwirq_test_run(unsigned long aplic_addr)
+{
+	volatile u8 *uart = (volatile u8 *)UART_QEMU_MMIO;
+
+	/* UART: enable RX interrupt */
+	uart[0x02] = 0x07;          /* FCR enable+clear */
+	uart[0x04] |= (1 << 3);     /* MCR.OUT2 */
+	uart[0x01] |= 0x01;         /* IER.ERBFI */
+	while (uart[0x05] & 0x01)   /* drain */
+		(void)uart[0x00];
+
+	sbi_printf("[APLIC TEST] Setup done. Type keys now.\n");
+}
+#endif
+
 static void aplic_init(struct aplic_data *aplic)
 {
 	struct aplic_delegate_data *deleg;
@@ -245,6 +280,7 @@ static int aplic_check_msicfg(struct aplic_msicfg_data *msicfg)
 	return 0;
 }
 
+#ifdef APLIC_QEMU_WIRED_TEST
 static int aplic_hwirq_handler(u32 hwirq, void *opaque)
 {
 	(void)opaque;
@@ -252,8 +288,12 @@ static int aplic_hwirq_handler(u32 hwirq, void *opaque)
 	sbi_printf("[APLIC] Enter registered hwirq %u raw handler callback\n",
 		   hwirq);
 
+	if (hwirq == 10)
+		aplic_test_uart_handler();
+
 	return SBI_OK;
 }
+#endif
 
 static inline void *aplic_idc_base(unsigned long aplic_addr, u32 idc_index)
 {
@@ -501,10 +541,14 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 
 	/* Attach to the aplic list */
 	sbi_list_add_tail(&aplic->node, &aplic_list);
+#ifdef APLIC_QEMU_WIRED_TEST
 	rc = sbi_irqchip_register_handler(&aplic->irqchip, 1, aplic->num_source,
 					  aplic_hwirq_handler, NULL);
 	if (rc)
 		return rc;
 
+	/* Enable test in M-mode before jumping to any payload */
+	aplic_hwirq_test_run(aplic->addr);
+#endif
 	return 0;
 }
