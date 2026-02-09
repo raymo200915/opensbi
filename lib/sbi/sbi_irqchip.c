@@ -79,8 +79,11 @@ int sbi_irqchip_process_hwirq(struct sbi_irqchip_device *chip, u32 hwirq)
 		return SBI_EINVAL;
 
 	data = &chip->hwirqs[hwirq];
-	if (!data->raw_handler)
+	if (!data->raw_handler) {
+		sbi_printf("[IRQCHIP] No handler for hwirq %u\n", hwirq);
 		return SBI_ENOENT;
+	}
+	sbi_printf("[IRQCHIP] Calling handler for hwirq %u\n", hwirq);
 
 	return data->raw_handler(chip, hwirq);
 }
@@ -184,16 +187,20 @@ int sbi_irqchip_raw_handler_default(struct sbi_irqchip_device *chip, u32 hwirq)
 	if (!chip || chip->num_hwirq <= hwirq)
 		return SBI_EINVAL;
 
+	sbi_printf("[IRQCHIP] Enter hwirq %u raw handler\n", hwirq);
 	h = sbi_irqchip_find_handler(chip, hwirq);
 	if (!h)
 		return SBI_EINVAL;
 
-	if (h->callback)
+	if (h->callback) {
+		sbi_printf("[IRQCHIP] Calling hwirq %u raw handler callback\n", hwirq);
 		rc = h->callback(hwirq, h->priv);
+	}
 
-	if (chip->hwirq_eoi)
+	if (chip->hwirq_eoi) {
+		sbi_printf("[IRQCHIP] Calling EOI of hwirq %u\n", hwirq);
 		chip->hwirq_eoi(chip, hwirq);
-
+	}
 	return rc;
 }
 
