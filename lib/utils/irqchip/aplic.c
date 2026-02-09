@@ -138,6 +138,41 @@ static SBI_LIST_HEAD(aplic_list);
 static void aplic_writel_msicfg(struct aplic_msicfg_data *msicfg,
 				void *msicfgaddr, void *msicfgaddrH);
 
+#ifdef APLIC_QEMU_WIRED_TEST
+#define UART_QEMU_MMIO 0x10000000UL
+
+static int aplic_hwirq_handler(u32 hwirq, void *opaque)
+{
+	volatile u8 *uart = (volatile u8 *)UART_QEMU_MMIO;
+
+	if (hwirq != 10)
+		return SBI_OK;
+
+	while (uart[0x05] & 0x01) {
+		u8 ch = uart[0x00];
+
+		sbi_printf("[APLIC TEST] UART got '%c'(0x%02x)\n",
+			   (ch >= 32 && ch < 127) ? ch : '.', ch);
+	}
+	(void)uart[0x02];
+
+	return SBI_OK;
+}
+
+static void aplic_hwirq_test_run(unsigned long aplic_addr)
+{
+	volatile u8 *uart = (volatile u8 *)UART_QEMU_MMIO;
+
+	uart[0x02] = 0x07;
+	uart[0x04] |= (1 << 3);
+	uart[0x01] |= 0x01;
+	while (uart[0x05] & 0x01)
+		(void)uart[0x00];
+
+	sbi_printf("[APLIC TEST] Setup done. Type keys now.\n");
+}
+#endif
+
 static inline bool aplic_is_direct_mode(struct aplic_data *aplic)
 {
 	return aplic && aplic->num_idc;
@@ -416,6 +451,11 @@ static int aplic_process_hwirqs(struct sbi_irqchip_device *chip)
 		return 0;
 
 	while ((claimi = aplic_idc_read(aplic, idc_index, APLIC_IDC_CLAIMI))) {
+#ifdef APLIC_QEMU_WIRED_TEST
+		/* Preserve the local QEMU CLAIMI workaround. */
+		if (aplic_idc_read(aplic, idc_index, APLIC_IDC_CLAIMI) != claimi)
+			break;
+#endif
 		hwirq = (claimi >> APLIC_IDC_TOPI_ID_SHIFT) &
 			APLIC_IDC_TOPI_ID_MASK;
 
@@ -439,8 +479,12 @@ static void aplic_hwirq_eoi(struct sbi_irqchip_device *chip, u32 hwirq)
 	u32 sm;
 
 	aplic = container_of(chip, struct aplic_data, irqchip);
-	if (aplic_is_direct_mode(aplic))
+	if (aplic_is_direct_mode(aplic)) {
+#ifdef APLIC_QEMU_WIRED_TEST
+		aplic_irq_clrip(aplic, hwirq);
+#endif
 		return;
+	}
 
 	sm = aplic_sourcecfg_read(aplic, hwirq) & APLIC_SOURCECFG_SM_MASK;
 	if (sm == APLIC_SOURCECFG_SM_LEVEL_HIGH ||
@@ -785,6 +829,19 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 	}
 	/* Attach to the aplic list */
 	sbi_list_add_tail(&aplic->node, &aplic_list);
+#ifdef APLIC_QEMU_WIRED_TEST
+	if (aplic->targets_mmode && !msi_mode) {
+		rc = sbi_irqchip_register_handler(&aplic->irqchip, 10, 1,
+						 SBI_HWIRQ_FLAGS_LEVEL_HIGH,
+						 aplic_hwirq_handler, NULL);
+		if (rc)
+			return rc;
+		rc = sbi_irqchip_unmask_hwirq(&aplic->irqchip, 10);
+		if (rc)
+			return rc;
+		aplic_hwirq_test_run(aplic->addr);
+	}
+#endif
 
 	return 0;
 }
