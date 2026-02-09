@@ -245,6 +245,178 @@ static int aplic_check_msicfg(struct aplic_msicfg_data *msicfg)
 	return 0;
 }
 
+static int aplic_hwirq_handler(u32 hwirq, void *opaque)
+{
+	(void)opaque;
+
+	sbi_printf("[APLIC] Enter registered hwirq %u raw handler callback\n",
+		   hwirq);
+
+	return SBI_OK;
+}
+
+static inline void *aplic_idc_base(unsigned long aplic_addr, u32 idc_index)
+{
+	return (void *)(aplic_addr + APLIC_IDC_BASE +
+			(unsigned long)idc_index * APLIC_IDC_SIZE);
+}
+
+static void aplic_hwirq_mask(struct sbi_irqchip_device *chip, u32 hwirq)
+{
+	struct aplic_data *w = chip->chip_priv;
+
+	if (!w || !hwirq)
+		return;
+
+	if (!w->addr || hwirq > w->num_source)
+		return;
+
+	/* Disable source */
+	writel(hwirq, (void *)(w->addr + APLIC_CLRIENUM));
+}
+
+static void aplic_hwirq_unmask(struct sbi_irqchip_device *chip, u32 hwirq)
+{
+	struct aplic_data *w = chip->chip_priv;
+
+	if (!w || !hwirq)
+		return;
+
+	if (!w->addr || hwirq > w->num_source)
+		return;
+
+	/* Enable source */
+	writel(hwirq, (void *)(w->addr + APLIC_SETIENUM));
+}
+
+static int aplic_hwirq_claim(struct sbi_irqchip_device *chip, u32 *hwirq)
+{
+	struct aplic_data *w = chip->chip_priv;
+	u32 hartid = current_hartid();
+	int hidx = sbi_hartid_to_hartindex(hartid);
+	void *idc;
+	u32 v, id;
+
+	if (!w || !hwirq)
+		return SBI_EINVAL;
+
+	if (!w->addr || hidx < 0 || (u32)hidx >= w->num_idc)
+		return SBI_ENODEV;
+
+	idc = aplic_idc_base(w->addr, (u32)hidx);
+
+	/*
+	 * Read CLAIMI: returns TOPI value.
+	 * ID==0 means spurious interrupt (spec-defined).
+	 */
+	v = readl(idc + APLIC_IDC_CLAIMI); /* dequeue */
+	/*
+	 * QEMU workaround: Read CLAIMI a second time since QEMU's APLIC model
+	 * currently has a bug and may not clear pending on deassert after the
+	 * first reading.
+	 */
+	if (readl(idc + APLIC_IDC_CLAIMI) != v)
+		return SBI_ENOENT;
+
+	id = (v >> APLIC_IDC_TOPI_ID_SHIFT) & APLIC_IDC_TOPI_ID_MASK;
+
+	/* ID==0 means spurious / no pending wired interrupt */
+	if (!id)
+		return SBI_ENOENT;
+
+	/* Bound check against DT-discovered num_src */
+	if (id > w->num_source)
+		return SBI_EINVAL;
+
+	*hwirq = id;
+
+	return SBI_OK;
+}
+
+static void aplic_hwirq_eoi(struct sbi_irqchip_device *chip, u32 hwirq)
+{
+	struct aplic_data *w = chip->chip_priv;
+	u32 hartid = current_hartid();
+	int hidx = sbi_hartid_to_hartindex(hartid);
+	void *idc;
+
+	sbi_printf("[APLIC] Enter regitered EOI of hwirq %u\n", hwirq);
+
+	if (!w || !w->addr)
+		return;
+	if (hidx < 0 || (u32)hidx >= w->num_idc)
+		return;
+
+	idc = aplic_idc_base(w->addr, (u32)hidx);
+
+	/* QEMU workaround: clear pending after source deassert for level IRQ */
+	writel(hwirq, idc + APLIC_CLRIPNUM);
+}
+
+static int aplic_hwirq_setup(struct sbi_irqchip_device *chip, u32 hwirq)
+{
+	const u32 hart_idx = 0;
+	unsigned long idc;
+	struct aplic_data *w = chip->chip_priv;
+
+	idc = w->addr + APLIC_IDC_BASE + hart_idx * APLIC_IDC_SIZE;
+
+	/* APLIC: sourcecfg/target/enable */
+	writel(APLIC_SOURCECFG_SM_LEVEL_HIGH,
+	       (void *)(w->addr + APLIC_SOURCECFG_BASE + (hwirq - 1) * 4));
+
+	writel((hart_idx << APLIC_TARGET_HART_IDX_SHIFT) | APLIC_DEFAULT_PRIORITY,
+	       (void *)(w->addr + APLIC_TARGET_BASE + (hwirq - 1) * 4));
+
+	writel(hwirq, (void *)(w->addr + APLIC_SETIENUM));
+
+	/* Direct mode for aia=aplic: DM=0 => don't set DM bit */
+	writel(APLIC_DOMAINCFG_IE | APLIC_DOMAINCFG_BE,
+	       (void *)(w->addr + APLIC_DOMAINCFG));
+
+	/* IDC delivery */
+	writel(APLIC_ENABLE_IDELIVERY, (void *)(idc + APLIC_IDC_IDELIVERY));
+	writel(APLIC_ENABLE_ITHRESHOLD, (void *)(idc + APLIC_IDC_ITHRESHOLD));
+
+	/* Enable MEIE + global MIE */
+	csr_set(CSR_MIE, (1UL << 11));  /* MEIE */
+	csr_set(CSR_MSTATUS, MSTATUS_MIE);
+
+	return SBI_OK;
+}
+
+static int aplic_process_hwirqs(struct sbi_irqchip_device *chip)
+{
+	if (!chip)
+		return SBI_ENODEV;
+
+	for (;;) {
+		u32 hwirq = 0;
+		int rc = aplic_hwirq_claim(chip, &hwirq);
+
+		if (rc == SBI_ENOENT)
+			break;
+		if (rc)
+			return rc;
+
+		if (!hwirq)
+			break;
+
+		sbi_printf("[APLIC] IDC_TOPI_ID from CLAIMI (hwirq) %u\n",
+			   hwirq);
+
+		if (hwirq > chip->num_hwirq) {
+			sbi_printf("[APLIC] hwirq %u > max (num_hwirq) %u)\n",
+				   hwirq, chip->num_hwirq);
+			break;
+		}
+
+		sbi_irqchip_process_hwirq(chip, hwirq);
+	}
+
+	return SBI_OK;
+}
+
 int aplic_cold_irqchip_init(struct aplic_data *aplic)
 {
 	int rc;
@@ -308,12 +480,31 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 	/* Register irqchip device */
 	aplic->irqchip.id = aplic->unique_id;
 	aplic->irqchip.num_hwirq = aplic->num_source + 1;
+	aplic->irqchip.chip_priv = aplic;
+	aplic->irqchip.hwirq_mask = aplic_hwirq_mask;
+	aplic->irqchip.hwirq_unmask = aplic_hwirq_unmask;
+	aplic->irqchip.hwirq_eoi = aplic_hwirq_eoi;
+	/*
+	 * Only the domain that directly injects interrupts into M-mode external
+	 * interrupt line should provide process_hwirqs().
+	 *
+	 * The other domain (e.g. S-mode) may still be registered so that its
+	 * other ops (mask/unmask/config/etc.) can be used, but it must not
+	 * claim to be the external interrupt line provider.
+	 */
+	if (aplic->targets_mmode)
+		aplic->irqchip.process_hwirqs = aplic_process_hwirqs;
+	aplic->irqchip.hwirq_setup = aplic_hwirq_setup;
 	rc = sbi_irqchip_add_device(&aplic->irqchip);
 	if (rc)
 		return rc;
 
 	/* Attach to the aplic list */
 	sbi_list_add_tail(&aplic->node, &aplic_list);
+	rc = sbi_irqchip_register_handler(&aplic->irqchip, 1, aplic->num_source,
+					  aplic_hwirq_handler, NULL);
+	if (rc)
+		return rc;
 
 	return 0;
 }
