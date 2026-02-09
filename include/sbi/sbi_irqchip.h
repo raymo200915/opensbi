@@ -56,6 +56,9 @@ struct sbi_irqchip_device {
 
 	/** Unmask a hardware interrupt of this irqchip */
 	void (*hwirq_unmask)(struct sbi_irqchip_device *chip, u32 hwirq);
+
+	/** Irqchip device private context */
+	void *chip_priv;
 };
 
 /**
