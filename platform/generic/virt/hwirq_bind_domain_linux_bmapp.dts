@@ -1,0 +1,82 @@
+/dts-v1/;
+/plugin/;
+
+ / {
+	fragment@0 {
+		target-path = "/chosen";
+		__overlay__ {
+			opensbi-domains {
+				compatible = "opensbi,domain,config";
+
+				d1_uart_mmio: memregion_domain1_uart_mmio {
+					compatible = "opensbi,domain,memregion";
+					base  = <0x0 0x10000000>;
+					order = <12>;
+					mmio;
+				};
+
+				d1_bmapp_ram: memregion_domain1_bmapp_ram {
+					compatible = "opensbi,domain,memregion";
+					base  = <0x0 0x88000000>;
+					order = <24>;
+				};
+
+				/*
+				 * Domain instance:
+				 * - possible-harts uses CPU node phandles
+				 * - regions use label references (fdtoverlay will fixup phandles)
+				 * - opensbi,host-irqs uses <first count> pairs
+				 */
+				domain1: domain1 {
+					compatible = "opensbi,domain,instance";
+
+					/*
+					 * QEMU virt -smp 4 dumpdtb phandles:
+					 * cpu@1 -> 0x05, cpu@2 -> 0x03
+					 */
+					possible-harts = <0x05 0x03>;
+					boot-hart      = <0x03>;
+
+					/*
+					 * Keep permissive for test.
+					 * access=0x3f: enable all M+SU R/W/X flags (test only).
+					 */
+					regions = <&d1_bmapp_ram 0x3f>,
+						  <&d1_uart_mmio 0x3f>;
+
+					/*
+					 * Route rule: Bind host HWIRQs ranges to this domain.
+					 * Format: <first count> ...
+					 * If no route rule matches, HWIRQs default to root domain.
+					 *
+					 * UART RX is hwirq=10 on QEMU virt:
+					 *   fdtget -t i qemu_merge.dtb /soc/serial@10000000 interrupts
+					 *     => "10 4"
+					 *
+					 * Start with only <10 1> for clean bring-up.
+					 */
+					opensbi,host-irqs = <10 1>;
+
+					next-addr = <0x0 0x88000000>;
+					next-arg1 = <0x0 0x0>;
+					next-mode = <0x1>;
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/cpus/cpu@1";
+		__overlay__ {
+			opensbi-domain = <&domain1>;
+		};
+	};
+
+	fragment@2 {
+		target-path = "/cpus/cpu@2";
+		__overlay__ {
+			opensbi-domain = <&domain1>;
+		};
+	};
+
+};
