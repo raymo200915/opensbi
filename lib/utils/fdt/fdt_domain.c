@@ -10,11 +10,14 @@
 
 #include <libfdt.h>
 #include <libfdt_env.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_irqchip.h>
 #include <sbi/sbi_scratch.h>
+#include <sbi/sbi_virq.h>
 #include <sbi_utils/fdt/fdt_domain.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 
@@ -304,6 +307,77 @@ static int __fdt_parse_region(const void *fdt, int domain_offset,
 	return 0;
 }
 
+static int __fdt_iterate_each_host_irq(void *fdt, int domain_offset,
+				       void *opaque,
+				       int (*fn)(void *fdt, int domain_offset,
+				       u32 first_hwirq, u32 num_hwirq,
+				       void *opaque))
+{
+	int len, rc;
+	u32 i, count;
+	const fdt32_t *p;
+
+	if (!fdt || domain_offset < 0 || !fn)
+		return SBI_EINVAL;
+
+	if (fdt_node_check_compatible(fdt, domain_offset,
+				      "opensbi,domain,instance"))
+		return SBI_EINVAL;
+
+	/*
+	 * Get the hwirq / domain binding for routing.
+	 * Format: <first_hwirq count> ...
+	 * Each entry is 2 cells.
+	 */
+	p = fdt_getprop(fdt, domain_offset, "opensbi,host-irqs", &len);
+	if (!p)
+		return 0;
+
+	if (len < (int)(2 * sizeof(fdt32_t)) ||
+	    (len % (int)(2 * sizeof(fdt32_t))))
+		return SBI_EINVAL;
+
+	count = (u32)len / (2 * sizeof(fdt32_t));
+
+	for (i = 0; i < count; i++) {
+		u32 first = fdt32_to_cpu(p[i * 2 + 0]);
+		u32 num   = fdt32_to_cpu(p[i * 2 + 1]);
+
+		if (!num)
+			return SBI_EINVAL;
+
+		rc = fn(fdt, domain_offset, first, num, opaque);
+		if (rc)
+			return rc;
+	}
+
+	return 0;
+}
+
+static int __fdt_add_one_host_irq_range(void *fdt, int domain_offset,
+					u32 first_hwirq, u32 num_hwirq,
+					void *opaque)
+{
+	struct sbi_domain *dom = (struct sbi_domain *)opaque;
+
+	return sbi_virq_route_add_range(dom, first_hwirq, num_hwirq);
+}
+
+static int __fdt_bind_irq(const void *fdt, int domain_offset,
+			  struct sbi_domain *dom)
+{
+	int err;
+
+	/* Just populate HWIRQ -> Domain route rules in VIRQ layer. */
+	err = __fdt_iterate_each_host_irq((void *)fdt, domain_offset, dom,
+					  __fdt_add_one_host_irq_range);
+	if (err) {
+		sbi_printf("[DOMAIN-IRQ] route bind failed for %s (err=%d)\n",
+			   dom->name, err);
+	}
+	return err;
+}
+
 static int __fdt_parse_domain(const void *fdt, int domain_offset, void *opaque)
 {
 	u32 val32;
@@ -497,6 +571,10 @@ static int __fdt_parse_domain(const void *fdt, int domain_offset, void *opaque)
 
 	/* Register the domain */
 	err = sbi_domain_register(dom, &assign_mask);
+	if (err)
+		goto fail_free_all;
+
+	err = __fdt_bind_irq(fdt, domain_offset, dom);
 	if (err)
 		goto fail_free_all;
 
