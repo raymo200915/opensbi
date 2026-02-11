@@ -1,0 +1,127 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/interrupt-controller@c000000";
+		__overlay__ {
+			/*
+			 * Keep UART RX hwirq 10 local to the root M-mode APLIC
+			 * by delegating only 1..9 and 11..96 to the child
+			 * S-mode APLIC from the stock QEMU virt,aia=aplic DT.
+			 *
+			 * Base DTB (qemu_linux_test.dtb) phandles:
+			 *   /soc/interrupt-controller@d000000 -> 0x0a
+			 */
+			riscv,delegate = <0x0a 0x01 0x09 0x0a 0x0b 0x56>;
+			riscv,delegation = <0x0a 0x01 0x09 0x0a 0x0b 0x56>;
+		};
+	};
+
+	fragment@1 {
+		target-path = "/chosen";
+		__overlay__ {
+			opensbi-domains {
+				compatible = "opensbi,domain,config";
+
+				d1_uart_mmio: memregion_domain1_uart_mmio {
+					compatible = "opensbi,domain,memregion";
+					base  = <0x0 0x10000000>;
+					order = <12>;
+					mmio;
+				};
+
+				d1_bmapp_ram: memregion_domain1_bmapp_ram {
+					compatible = "opensbi,domain,memregion";
+					base  = <0x0 0x88000000>;
+					order = <24>;
+				};
+
+				d2_bmapp_ram: memregion_domain2_bmapp_ram {
+					compatible = "opensbi,domain,memregion";
+					base  = <0x0 0x89000000>;
+					order = <24>;
+				};
+
+				/*
+				 * Domain instance:
+				 * - possible-harts uses CPU node phandles
+				 * - regions use label references (fdtoverlay will fixup phandles)
+				 */
+				domain1: domain1 {
+					compatible = "opensbi,domain,instance";
+
+					/*
+					 * QEMU virt -smp 4 dumpdtb phandles:
+					 * cpu@1 -> 0x05, cpu@2 -> 0x03
+					 */
+					possible-harts = <0x05 0x03>;
+					boot-hart      = <0x03>;
+
+					/*
+					 * Keep permissive for test.
+					 * access=0x3f: enable all M+SU R/W/X flags (test only).
+					 */
+					regions = <&d1_bmapp_ram 0x3f>,
+						  <&d1_uart_mmio 0x3f>;
+
+					next-addr = <0x0 0x88000000>;
+					next-arg1 = <0x0 0x1>;
+					next-mode = <0x1>;
+				};
+
+				domain2: domain2 {
+					compatible = "opensbi,domain,instance";
+
+					/*
+					 * QEMU virt -smp 4 dumpdtb phandles:
+					 * cpu@1 -> 0x05, cpu@2 -> 0x03
+					 */
+					possible-harts = <0x05 0x03>;
+					boot-hart      = <0x03>;
+
+					regions = <&d2_bmapp_ram 0x3f>,
+						  <&d1_uart_mmio 0x3f>;
+
+					next-addr = <0x0 0x89000000>;
+					next-arg1 = <0x0 0x2>;
+					next-mode = <0x1>;
+				};
+
+				rpmi_sysirq_intc: interrupt-controller {
+					compatible = "opensbi,mpxy-sysirq";
+					interrupt-controller;
+					#interrupt-cells = <1>;
+
+					/*
+					 * VIRQ numbers are allocated from zero, in order.
+					 * Each entry: <&irqchip hwirq flags>
+					 * flags: IRQ_TYPE_LEVEL_HIGH = 4
+					 */
+					/*
+					 * Base DTB (qemu_linux_test.dtb) phandle:
+					 * /soc/interrupt-controller@c000000 -> 0x09
+					 */
+					interrupts-extended =
+						<0x09 10 4>, /* VIRQ 0: UART RX */
+						<0x09 20 4>, /* VIRQ 1: test */
+						<0x09 21 4>; /* VIRQ 2: test */
+
+					/* MPXY channel id allocated by system designer */
+					opensbi,mpxy-channel-id = <4>;
+
+					/* Route VIRQs to domain2 */
+					opensbi,domain = <&domain2>;
+				};
+			};
+		};
+	};
+
+	fragment@2 {
+		target-path = "/cpus/cpu@2";
+		__overlay__ {
+			opensbi-domain = <&domain1>;
+		};
+	};
+
+};
