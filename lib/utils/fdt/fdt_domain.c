@@ -10,11 +10,14 @@
 
 #include <libfdt.h>
 #include <libfdt_env.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_irqchip.h>
 #include <sbi/sbi_scratch.h>
+#include <sbi/sbi_virq.h>
 #include <sbi_utils/fdt/fdt_domain.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 
@@ -304,6 +307,7 @@ static int __fdt_parse_region(const void *fdt, int domain_offset,
 	return 0;
 }
 
+
 static int __fdt_parse_domain(const void *fdt, int domain_offset, void *opaque)
 {
 	u32 val32;
@@ -511,6 +515,114 @@ fail_free_domain:
 	return err;
 }
 
+static int __fdt_parse_mpxy_sysirq_node(const void *fdt, int nodeoff)
+{
+	const fdt32_t *val;
+	int len, rc, doff;
+	u32 channel_id;
+	u32 index;
+	struct sbi_domain *dom;
+
+	if (!fdt || nodeoff < 0)
+		return SBI_EINVAL;
+
+	val = fdt_getprop(fdt, nodeoff, "opensbi,mpxy-channel-id", &len);
+	if (!val || len < (int)sizeof(fdt32_t)) {
+		sbi_printf("[SYSIRQ] missing opensbi,mpxy-channel-id\n");
+		return SBI_EINVAL;
+	}
+	channel_id = fdt32_to_cpu(*val);
+
+	val = fdt_getprop(fdt, nodeoff, "opensbi,domain", &len);
+	if (!val || len < (int)sizeof(fdt32_t)) {
+		sbi_printf("[SYSIRQ] missing opensbi,domain\n");
+		return SBI_EINVAL;
+	}
+
+	doff = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*val));
+	if (doff < 0)
+		return doff;
+
+	dom = sbi_domain_find_by_name(fdt_get_name(fdt, doff, NULL));
+	if (!dom) {
+		sbi_printf("[SYSIRQ] domain not found for node %s\n",
+			   fdt_get_name(fdt, doff, NULL));
+		return SBI_ENOENT;
+	}
+
+	if (!sbi_virq_is_inited()) {
+		sbi_printf("[SYSIRQ] VIRQ not initialized before sysirq parse\n");
+		return SBI_EINVAL;
+	}
+
+	/* Pre-allocate VIRQ map based on interrupts-extended count */
+	for (index = 0; ; index++) {
+		rc = fdt_parse_interrupts_extended_entry(fdt, nodeoff, index,
+							 NULL, NULL,
+							 NULL, NULL);
+		if (rc == SBI_ENOENT)
+			break;
+		if (rc)
+			return rc;
+	}
+
+	rc = sbi_virq_map_ensure_cap(channel_id, index);
+	if (rc)
+		return rc;
+
+	for (index = 0; ; index++) {
+		struct sbi_irqchip_device *chip = NULL;
+		u32 hwirq = 0;
+
+		rc = fdt_parse_interrupts_extended_entry(fdt, nodeoff, index,
+							 &chip, &hwirq,
+							 NULL, NULL);
+		if (rc == SBI_ENOENT)
+			break;
+		if (rc)
+			return rc;
+		if (!chip)
+			return SBI_ENODEV;
+
+		rc = sbi_virq_map_set(channel_id, chip->id, hwirq, index);
+		if (rc)
+			return rc;
+
+		rc = sbi_virq_route_add(dom, hwirq, channel_id);
+		if (rc)
+			return rc;
+	}
+
+	return SBI_OK;
+}
+
+static int __fdt_parse_mpxy_sysirq_nodes(const void *fdt)
+{
+	int poffset, noff, rc;
+
+	if (!fdt)
+		return SBI_EINVAL;
+
+	poffset = fdt_path_offset(fdt, "/chosen");
+	if (poffset < 0)
+		return 0;
+	poffset = fdt_node_offset_by_compatible(fdt, poffset,
+						"opensbi,domain,config");
+	if (poffset < 0)
+		return 0;
+
+	fdt_for_each_subnode(noff, fdt, poffset) {
+		if (fdt_node_check_compatible(fdt, noff,
+					      "opensbi,mpxy-sysirq"))
+			continue;
+		rc = __fdt_parse_mpxy_sysirq_node(fdt, noff);
+		if (rc)
+			return rc;
+	}
+
+	return 0;
+}
+
 int fdt_domains_populate(const void *fdt)
 {
 	const u32 *val;
@@ -550,6 +662,10 @@ int fdt_domains_populate(const void *fdt)
 	}
 
 	/* Iterate over each domain in FDT and populate details */
-	return fdt_iterate_each_domain_ro(fdt, &cold_domain_offset,
-					  __fdt_parse_domain);
+	err = fdt_iterate_each_domain_ro(fdt, &cold_domain_offset,
+					 __fdt_parse_domain);
+	if (err)
+		return err;
+
+	return __fdt_parse_mpxy_sysirq_nodes(fdt);
 }
