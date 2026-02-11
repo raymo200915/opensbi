@@ -1,0 +1,51 @@
+/dts-v1/;
+/plugin/;
+
+ / {
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			chosen {
+				opensbi-domains {
+					compatible = "opensbi,domain,config";
+
+					d1_uart_mmio: memregion_domain1_uart_mmio {
+						compatible = "opensbi,domain,memregion";
+						base  = <0x0 0x10000000>;
+						order = <12>;
+						mmio;
+					};
+
+					d1_bmapp_ram: memregion_domain1_bmapp_ram {
+						compatible = "opensbi,domain,memregion";
+						base  = <0x0 0x88000000>;
+						order = <24>;
+					};
+
+					domain1: domain1 {
+						compatible = "opensbi,domain,instance";
+
+						possible-harts = <0x01>;
+						boot-hart      = <0x01>;
+
+						regions = <&d1_bmapp_ram 0x3f>,
+							  <&d1_uart_mmio 0x3f>;
+
+						opensbi,host-irqs = <10 1>;
+
+						next-addr = <0x0 0x88000000>;
+						next-arg1 = <0x0 0x0>;
+						next-mode = <0x1>;
+					};
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/cpus/cpu@1";
+		__overlay__ {
+			opensbi-domain = <&domain1>;
+		};
+	};
+};
