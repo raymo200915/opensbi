@@ -1,0 +1,79 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	/*
+	 * Fragment 0: OpenSBI domain configuration under /chosen
+	 */
+	fragment@0 {
+		target-path = "/chosen";
+		__overlay__ {
+			opensbi-domains {
+				compatible = "opensbi,domain,config";
+
+				/*
+				 * DRAM region for domain1 (2GB from 0x8000_0000).
+				 * base is 64-bit: <hi lo>, order is log2(size).
+				 */
+				memregion_dram_2g: memregion_dram_2g {
+					compatible = "opensbi,domain,memregion";
+					base  = <0x0 0x80000000>;
+					order = <31>;
+				};
+
+				/*
+				 * UART MMIO region so S-mode payload can access UART registers
+				 * without fault. 0x1000_0000 size 4KB.
+				 */
+				uart0_mmio: memregion_uart0 {
+					compatible = "opensbi,domain,memregion";
+					base  = <0x0 0x10000000>;
+					order = <12>;
+				};
+
+				/*
+				 * Domain instance:
+				 * - possible-harts = <cpu0 phandle> (your cpu@0 phandle is 1)
+				 * - regions use label references (fdtoverlay will fixup phandles)
+				 * - opensbi,host-irqs uses <first count hartid> tuples
+				 */
+				domain1: domain1 {
+					compatible = "opensbi,domain,instance";
+
+					/* cpu@0 phandle in your base qemu dtb is 1 */
+					possible-harts = <0x1>;
+
+					/*
+					 * Keep permissive for test.
+					 * access=0x3f: enable all M+SU R/W/X flags (test only).
+					 */
+					regions = <&memregion_dram_2g 0x3f>,
+						  <&uart0_mmio 0x3f>;
+
+					/*
+					 * Route rule: Bind host HWIRQs ranges to this domain.
+					 * Format: <first_hwirq count hartid> ...
+					 * If no route rule matches, HWIRQs default to root domain.
+					 *
+					 * UART RX is hwirq=10 on QEMU virt:
+					 *   fdtget -t i qemu_merge.dtb /soc/serial@10000000 interrupts
+					 *     => "10 4"
+					 *
+					 * Start with only <10 1> for clean bring-up.
+					 */
+					opensbi,host-irqs = <10 1 0>;
+				};
+			};
+		};
+	};
+
+	/*
+	 * Fragment 1: Assign cpu0 to domain1 using label reference
+	 */
+	fragment@1 {
+		target-path = "/cpus/cpu@0";
+		__overlay__ {
+			opensbi-domain = <&domain1>;
+		};
+	};
+};
