@@ -12,6 +12,8 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_heap.h>
+#include <sbi/sbi_virq.h>
 #include <sbi_utils/irqchip/aplic.h>
 
 #define APLIC_MAX_IDC			(1UL << 14)
@@ -393,30 +395,36 @@ static void aplic_hwirq_eoi(struct sbi_irqchip_device *chip, u32 hwirq)
 	writel(hwirq, idc + APLIC_CLRIPNUM);
 }
 
-static int aplic_hwirq_setup(struct sbi_irqchip_device *chip, u32 hwirq)
+static void aplic_set_target(struct sbi_irqchip_device *chip, u32 hwirq,
+			     u32 hart_idx)
 {
-	const u32 hart_idx = 0;
 	unsigned long idc;
 	struct aplic_data *w = chip->chip_priv;
 
 	idc = w->addr + APLIC_IDC_BASE + hart_idx * APLIC_IDC_SIZE;
 
+	writel((hart_idx << APLIC_TARGET_HART_IDX_SHIFT) |
+	       APLIC_DEFAULT_PRIORITY,
+	       (void *)(w->addr + APLIC_TARGET_BASE + (hwirq - 1) * 4));
+
+	/* IDC delivery */
+	writel(APLIC_ENABLE_IDELIVERY, (void *)(idc + APLIC_IDC_IDELIVERY));
+	writel(APLIC_ENABLE_ITHRESHOLD, (void *)(idc + APLIC_IDC_ITHRESHOLD));
+}
+
+static int aplic_hwirq_setup(struct sbi_irqchip_device *chip, u32 hwirq)
+{
+	struct aplic_data *w = chip->chip_priv;
+
 	/* APLIC: sourcecfg/target/enable */
 	writel(APLIC_SOURCECFG_SM_LEVEL_HIGH,
 	       (void *)(w->addr + APLIC_SOURCECFG_BASE + (hwirq - 1) * 4));
-
-	writel((hart_idx << APLIC_TARGET_HART_IDX_SHIFT) | APLIC_DEFAULT_PRIORITY,
-	       (void *)(w->addr + APLIC_TARGET_BASE + (hwirq - 1) * 4));
 
 	writel(hwirq, (void *)(w->addr + APLIC_SETIENUM));
 
 	/* Direct mode for aia=aplic: DM=0 => don't set DM bit */
 	writel(APLIC_DOMAINCFG_IE | APLIC_DOMAINCFG_BE,
 	       (void *)(w->addr + APLIC_DOMAINCFG));
-
-	/* IDC delivery */
-	writel(APLIC_ENABLE_IDELIVERY, (void *)(idc + APLIC_IDC_IDELIVERY));
-	writel(APLIC_ENABLE_ITHRESHOLD, (void *)(idc + APLIC_IDC_ITHRESHOLD));
 
 	/* Enable MEIE + global MIE */
 	csr_set(CSR_MIE, (1UL << 11));  /* MEIE */
@@ -510,9 +518,11 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 	}
 
 	if (aplic->num_idc) {
-		for (i = 0; i < aplic->num_idc; i++)
+		for (i = 0; i < aplic->num_idc; i++) {
+			sbi_printf("[APLIC] hart index %u\n", aplic->idc_map[i]);
 			sbi_hartmask_set_hartindex(aplic->idc_map[i],
 						   &aplic->irqchip.target_harts);
+		}
 	} else {
 		sbi_hartmask_set_all(&aplic->irqchip.target_harts);
 	}
@@ -549,6 +559,32 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 
 	/* Enable test in M-mode before jumping to any payload */
 	aplic_hwirq_test_run(aplic->addr);
+#elif APLIC_QEMU_VIRQ_TEST
+	/*
+	 * Register one global courier handler on the M-mode host irqchip.
+	 * Domain routing is resolved in VIRQ layer (hwirq -> domain queue).
+	 */
+	if (aplic->targets_mmode) {
+		struct sbi_virq_courier_ctx *ctx;
+
+		rc = sbi_virq_init(aplic->num_source);
+		if (rc)
+			return rc;
+
+		ctx = sbi_zalloc(sizeof(*ctx));
+		if (!ctx)
+			return SBI_ENOMEM;
+
+		ctx->chip = &aplic->irqchip;
+		aplic_set_target(&aplic->irqchip, 10, !aplic->num_idc ? 0 :
+				 aplic->num_idc - 1);
+		rc = sbi_irqchip_register_handler(&aplic->irqchip,
+						  10, 1,
+						  sbi_virq_courier_handler,
+						  ctx);
+		if (rc)
+			return rc;
+	}
 #endif
 	return 0;
 }
