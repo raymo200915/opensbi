@@ -13,6 +13,8 @@
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_scratch.h>
+#include <sbi/sbi_virq.h>
 #include <sbi_utils/irqchip/aplic.h>
 
 #define APLIC_MAX_IDC			(1UL << 14)
@@ -451,7 +453,7 @@ static int aplic_process_hwirqs(struct sbi_irqchip_device *chip)
 		return 0;
 
 	while ((claimi = aplic_idc_read(aplic, idc_index, APLIC_IDC_CLAIMI))) {
-#ifdef APLIC_QEMU_WIRED_TEST
+#if defined(APLIC_QEMU_WIRED_TEST) || defined(APLIC_QEMU_VIRQ_TEST)
 		/* Preserve the local QEMU CLAIMI workaround. */
 		if (aplic_idc_read(aplic, idc_index, APLIC_IDC_CLAIMI) != claimi)
 			break;
@@ -466,7 +468,7 @@ static int aplic_process_hwirqs(struct sbi_irqchip_device *chip)
 			continue;
 
 		tmp = sbi_irqchip_process_hwirq(chip, hwirq);
-		if (tmp)
+		if (tmp && tmp != SBI_EALREADY)
 			rc = tmp;
 	}
 
@@ -480,7 +482,7 @@ static void aplic_hwirq_eoi(struct sbi_irqchip_device *chip, u32 hwirq)
 
 	aplic = container_of(chip, struct aplic_data, irqchip);
 	if (aplic_is_direct_mode(aplic)) {
-#ifdef APLIC_QEMU_WIRED_TEST
+#if defined(APLIC_QEMU_WIRED_TEST) || defined(APLIC_QEMU_VIRQ_TEST)
 		aplic_irq_clrip(aplic, hwirq);
 #endif
 		return;
@@ -593,6 +595,21 @@ static int aplic_setup_msi(struct aplic_data *aplic, u32 hwirq)
 	return 0;
 }
 
+#ifdef APLIC_QEMU_VIRQ_TEST
+static void aplic_set_target(struct sbi_irqchip_device *chip, u32 hwirq,
+			     u32 idc_index)
+{
+	struct aplic_data *aplic = container_of(chip, struct aplic_data, irqchip);
+
+	aplic_target_write(aplic, hwirq, APLIC_TARGET_HART_IDX(idc_index) |
+			   APLIC_TARGET_IPRIO(APLIC_DEFAULT_PRIORITY));
+	aplic_idc_write(aplic, idc_index, APLIC_IDC_IDELIVERY,
+			APLIC_ENABLE_IDELIVERY);
+	aplic_idc_write(aplic, idc_index, APLIC_IDC_ITHRESHOLD,
+			APLIC_ENABLE_ITHRESHOLD);
+}
+#endif
+
 static int aplic_hwirq_setup(struct sbi_irqchip_device *chip,
 			     u32 hwirq, u32 hwirq_flags)
 {
@@ -681,7 +698,7 @@ static int aplic_hwirq_set_affinity(struct sbi_irqchip_device *chip,
 		return SBI_EINVAL;
 
 	aplic_target_write(aplic, hwirq,
-			   APLIC_TARGET_HART_IDX(hart_index) |
+			   APLIC_TARGET_HART_IDX(idc_index) |
 			   APLIC_TARGET_IPRIO(APLIC_DEFAULT_PRIORITY));
 
 	return 0;
@@ -840,6 +857,84 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 		if (rc)
 			return rc;
 		aplic_hwirq_test_run(aplic->addr);
+	}
+#elif defined(APLIC_QEMU_VIRQ_TEST)
+	/*
+	 * Register one global courier handler on the M-mode host irqchip.
+	 * Domain routing is resolved in VIRQ layer (hwirq -> domain queue).
+	 */
+	if (aplic->targets_mmode && !msi_mode) {
+		struct sbi_virq_courier_ctx *ctx;
+		u32 idc_idx = 0;
+		bool idc_found = false;
+		u32 hwirq;
+
+		rc = sbi_virq_init(aplic->num_source);
+		if (rc)
+			return rc;
+
+		ctx = sbi_zalloc(sizeof(*ctx));
+		if (!ctx)
+			return SBI_ENOMEM;
+
+		ctx->chip = &aplic->irqchip;
+		for (hwirq = 1; hwirq <= aplic->num_source; hwirq++) {
+			u32 hartidx;
+
+			if (!aplic->hwirq_target_hartindex)
+				break;
+
+			/* Get the precomputed target hart index */
+			hartidx = aplic->hwirq_target_hartindex[hwirq];
+			if (hartidx == -1U)
+				continue;
+
+			/*
+			 * APLIC target expects IDC index, not hartindex.
+			 * Map hartindex -> IDC index using idc_map[].
+			 */
+			idc_found = false;
+			if (aplic->num_idc && aplic->idc_map) {
+				u32 i;
+				for (i = 0; i < aplic->num_idc; i++) {
+					if (aplic->idc_map[i] == hartidx) {
+						idc_idx = i;
+						idc_found = true;
+						break;
+					}
+				}
+			}
+			if (!idc_found) {
+				/* Fallback to the last IDC if no mapping */
+				idc_idx = aplic->num_idc ?
+					(aplic->num_idc - 1) : 0;
+			}
+
+			/* Set the target IDC */
+			sbi_printf("APLIC: Set target IDC %d for hwirq %d\n",
+				   idc_idx, hwirq);
+			aplic_set_target(&aplic->irqchip, hwirq, idc_idx);
+		}
+		rc = sbi_irqchip_register_handler(&aplic->irqchip,
+						  10, 1,
+						  SBI_HWIRQ_FLAGS_LEVEL_HIGH,
+						  sbi_virq_courier_handler,
+						  ctx);
+		if (rc) {
+			sbi_free(ctx);
+			return rc;
+		}
+		/* Registration selects the current hart; restore the DT target. */
+		if (aplic->hwirq_target_hartindex &&
+		    aplic->hwirq_target_hartindex[10] != -1U) {
+			rc = sbi_irqchip_set_affinity(&aplic->irqchip, 10,
+					aplic->hwirq_target_hartindex[10]);
+			if (rc)
+				return rc;
+		}
+		rc = sbi_irqchip_unmask_hwirq(&aplic->irqchip, 10);
+		if (rc)
+			return rc;
 	}
 #endif
 
