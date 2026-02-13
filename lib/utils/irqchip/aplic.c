@@ -12,6 +12,8 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
+#include <sbi/sbi_heap.h>
+#include <sbi/sbi_virq.h>
 #include <sbi_utils/irqchip/aplic.h>
 
 #define APLIC_MAX_IDC			(1UL << 14)
@@ -306,6 +308,8 @@ static inline struct aplic_data *aplic_irqchip_to_data(struct sbi_irqchip_device
 	return container_of(chip, struct aplic_data, irqchip);
 }
 
+static bool aplic_mmode_direct(const struct aplic_data *aplic);
+
 static bool aplic_hwirq_delegated(const struct aplic_data *aplic, u32 hwirq)
 {
 	u32 i;
@@ -425,6 +429,14 @@ static int aplic_hwirq_claim(struct sbi_irqchip_device *chip, u32 *hwirq)
 	 * ID==0 means spurious interrupt (spec-defined).
 	 */
 	v = readl(idc + APLIC_IDC_CLAIMI); /* dequeue */
+#if defined(APLIC_QEMU_WIRED_TEST) || defined(APLIC_QEMU_VIRQ_TEST)
+	/*
+	 * QEMU's APLIC model may keep stale pending state after the first
+	 * CLAIMI read, so re-read once and ignore the transient mismatch.
+	 */
+	if (readl(idc + APLIC_IDC_CLAIMI) != v)
+		return SBI_ENOENT;
+#endif
 
 	id = (v >> APLIC_IDC_TOPI_ID_SHIFT) & APLIC_IDC_TOPI_ID_MASK;
 
@@ -441,10 +453,65 @@ static int aplic_hwirq_claim(struct sbi_irqchip_device *chip, u32 *hwirq)
 	return SBI_OK;
 }
 
+static void aplic_hwirq_eoi(struct sbi_irqchip_device *chip, u32 hwirq)
+{
+	struct aplic_data *aplic = aplic_irqchip_to_data(chip);
+
+	if (!aplic || !aplic->addr)
+		return;
+
+	/*
+	 * CLRIPNUM is a domain register, not an IDC-local register.
+	 * For level IRQs, CLAIMI may re-pend the source while the line is still
+	 * asserted, so completion must clear the domain pending bit after the
+	 * payload drains the device.
+	 */
+	writel(hwirq, (void *)(aplic->addr + APLIC_CLRIPNUM));
+}
+
+static void aplic_set_target(struct aplic_data *aplic, u32 hwirq, u32 idc_index)
+{
+	unsigned long idc;
+
+	if (!aplic->addr || !hwirq || hwirq > aplic->num_source)
+		return;
+	if (aplic->num_idc <= idc_index)
+		return;
+
+	idc = aplic->addr + APLIC_IDC_BASE +
+	      (unsigned long)idc_index * APLIC_IDC_SIZE;
+
+	writel((idc_index << APLIC_TARGET_HART_IDX_SHIFT) |
+	       APLIC_DEFAULT_PRIORITY,
+	       (void *)(aplic->addr + APLIC_TARGET_BASE + (hwirq - 1) * 4));
+
+	/* IDC delivery */
+	writel(APLIC_ENABLE_IDELIVERY, (void *)(idc + APLIC_IDC_IDELIVERY));
+	writel(APLIC_ENABLE_ITHRESHOLD, (void *)(idc + APLIC_IDC_ITHRESHOLD));
+}
+
+static int aplic_hwirq_setup_target_idc_index(struct aplic_data *aplic,
+					      struct sbi_irqchip_device *chip,
+					      u32 hwirq)
+{
+	u32 hartindex;
+	int idc_index;
+
+	if (aplic->hwirq_target_hartindex) {
+		hartindex = aplic->hwirq_target_hartindex[hwirq];
+		if (hartindex != -1U) {
+			idc_index = aplic_hartindex_to_idc_index(aplic, hartindex);
+			if (idc_index >= 0)
+				return idc_index;
+		}
+	}
+
+	return aplic_hwirq_target_idc_index(chip);
+}
+
 static int aplic_hwirq_setup(struct sbi_irqchip_device *chip, u32 hwirq)
 {
 	struct aplic_data *aplic = aplic_irqchip_to_data(chip);
-	unsigned long idc;
 	int idc_index;
 
 	if (!hwirq || hwirq > aplic->num_source)
@@ -454,28 +521,18 @@ static int aplic_hwirq_setup(struct sbi_irqchip_device *chip, u32 hwirq)
 	if (aplic_hwirq_delegated(aplic, hwirq))
 		return SBI_ENOTSUPP;
 
-	idc_index = aplic_hwirq_target_idc_index(chip);
+	idc_index = aplic_hwirq_setup_target_idc_index(aplic, chip, hwirq);
 	if (idc_index < 0)
 		return idc_index;
-
-	idc = aplic->addr + APLIC_IDC_BASE + idc_index * APLIC_IDC_SIZE;
 
 	/* APLIC: sourcecfg/target/enable */
 	writel(APLIC_SOURCECFG_SM_LEVEL_HIGH,
 	       (void *)(aplic->addr + APLIC_SOURCECFG_BASE + (hwirq - 1) * 4));
-
-	writel(((u32)idc_index << APLIC_TARGET_HART_IDX_SHIFT) |
-	       APLIC_DEFAULT_PRIORITY,
-	       (void *)(aplic->addr + APLIC_TARGET_BASE + (hwirq - 1) * 4));
-
+	aplic_set_target(aplic, hwirq, (u32)idc_index);
 	writel(hwirq, (void *)(aplic->addr + APLIC_SETIENUM));
 
 	/* Direct mode for aia=aplic: DM=0 => don't set DM bit */
 	writel(aplic_domaincfg_value(), (void *)(aplic->addr + APLIC_DOMAINCFG));
-
-	/* IDC delivery */
-	writel(APLIC_ENABLE_IDELIVERY, (void *)(idc + APLIC_IDC_IDELIVERY));
-	writel(APLIC_ENABLE_ITHRESHOLD, (void *)(idc + APLIC_IDC_ITHRESHOLD));
 
 	return SBI_OK;
 }
@@ -502,6 +559,9 @@ static int aplic_process_hwirqs(struct sbi_irqchip_device *chip)
 		}
 
 		rc = sbi_irqchip_process_hwirq(chip, hwirq);
+		/* Deferred completion paths consume the IRQ without EOI here. */
+		if (rc == SBI_EALREADY)
+			return SBI_OK;
 		if (rc)
 			return rc;
 	}
@@ -574,6 +634,7 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 	aplic->irqchip.num_hwirq = aplic->num_source + 1;
 	aplic->irqchip.hwirq_mask = aplic_hwirq_mask;
 	aplic->irqchip.hwirq_unmask = aplic_hwirq_unmask;
+	aplic->irqchip.hwirq_eoi = aplic_hwirq_eoi;
 	/*
 	 * Only the domain that directly injects interrupts into M-mode external
 	 * interrupt line should provide process_hwirqs().
@@ -602,6 +663,46 @@ int aplic_cold_irqchip_init(struct aplic_data *aplic)
 
 		/* Enable test in M-mode before jumping to any payload */
 		aplic_hwirq_test_run(aplic->addr);
+	}
+#elif APLIC_QEMU_VIRQ_TEST
+	if (aplic_mmode_direct(aplic) &&
+	    !aplic_hwirq_delegated(aplic, APLIC_QEMU_TEST_HWIRQ)) {
+		struct sbi_virq_courier_ctx *ctx;
+		u32 hwirq;
+
+		if (!sbi_virq_is_inited()) {
+			rc = sbi_virq_init(aplic->num_source);
+			if (rc)
+				return rc;
+		}
+
+		if (aplic->hwirq_target_hartindex) {
+			for (hwirq = 1; hwirq <= aplic->num_source; hwirq++) {
+				u32 hartindex = aplic->hwirq_target_hartindex[hwirq];
+				int idc_index;
+
+				if (hartindex == -1U)
+					continue;
+
+				idc_index = aplic_hartindex_to_idc_index(aplic, hartindex);
+				if (idc_index < 0)
+					return idc_index;
+
+				aplic_set_target(aplic, hwirq, (u32)idc_index);
+			}
+		}
+
+		ctx = sbi_zalloc(sizeof(*ctx));
+		if (!ctx)
+			return SBI_ENOMEM;
+
+		ctx->chip = &aplic->irqchip;
+		rc = sbi_irqchip_register_handler(&aplic->irqchip,
+						  APLIC_QEMU_TEST_HWIRQ, 1,
+						  sbi_virq_courier_handler,
+						  ctx);
+		if (rc)
+			return rc;
 	}
 #endif
 	return 0;

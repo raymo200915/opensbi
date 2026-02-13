@@ -45,11 +45,28 @@ struct sbi_irqchip_hart_data {
 static unsigned long irqchip_hart_data_off;
 static SBI_LIST_HEAD(irqchip_list);
 
+static struct sbi_irqchip_device *sbi_irqchip_find_hart_device(u32 hartindex)
+{
+	struct sbi_irqchip_device *chip;
+
+	sbi_list_for_each_entry(chip, &irqchip_list, node) {
+		if (!chip->process_hwirqs)
+			continue;
+		if (!sbi_hartmask_test_hartindex(hartindex, &chip->target_harts))
+			continue;
+		return chip;
+	}
+
+	return NULL;
+}
+
 int sbi_irqchip_process(void)
 {
 	struct sbi_irqchip_hart_data *hd;
 
 	hd = sbi_scratch_thishart_offset_ptr(irqchip_hart_data_off);
+	if (hd && !hd->chip)
+		hd->chip = sbi_irqchip_find_hart_device(current_hartindex());
 	if (!hd || !hd->chip || !hd->chip->process_hwirqs)
 		return SBI_ENODEV;
 
@@ -306,6 +323,8 @@ int sbi_irqchip_init(struct sbi_scratch *scratch, bool cold_boot)
 	}
 
 	hd = sbi_scratch_thishart_offset_ptr(irqchip_hart_data_off);
+	if (hd && !hd->chip)
+		hd->chip = sbi_irqchip_find_hart_device(current_hartindex());
 	if (hd && hd->chip && hd->chip->process_hwirqs)
 		csr_set(CSR_MIE, MIP_MEIP);
 
@@ -317,6 +336,8 @@ void sbi_irqchip_exit(struct sbi_scratch *scratch)
 	struct sbi_irqchip_hart_data *hd;
 
 	hd = sbi_scratch_thishart_offset_ptr(irqchip_hart_data_off);
+	if (hd && !hd->chip)
+		hd->chip = sbi_irqchip_find_hart_device(current_hartindex());
 	if (hd && hd->chip && hd->chip->process_hwirqs)
 		csr_clear(CSR_MIE, MIP_MEIP);
 }
