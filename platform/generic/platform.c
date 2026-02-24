@@ -11,6 +11,7 @@
 #include <platform_override.h>
 #include <sbi/riscv_asm.h>
 #include <sbi/sbi_bitops.h>
+#include <sbi/sbi_error.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_platform.h>
@@ -29,6 +30,8 @@
 #include <sbi_utils/reset/fdt_reset.h>
 #include <sbi_utils/rpxy/fdt_rpxy.h>
 #include <sbi_utils/serial/semihosting.h>
+
+extern int qemu_virt_hwiso_register(void *fdt);
 
 /* List of platform override modules generated at compile time */
 extern const struct platform_override *platform_override_modules[];
@@ -222,8 +225,16 @@ static int generic_nascent_init(void)
 
 static int generic_early_init(bool cold_boot)
 {
+	int rc;
+
 	if (cold_boot)
 		fdt_reset_init();
+
+	if (cold_boot) {
+		rc = qemu_virt_hwiso_register(fdt_get_address());
+		if (rc && rc != SBI_EALREADY)
+			return rc;
+	}
 
 	if (!generic_plat || !generic_plat->early_init)
 		return 0;
