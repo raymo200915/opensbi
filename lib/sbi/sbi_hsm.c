@@ -19,6 +19,7 @@
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_hsm.h>
+#include <sbi/sbi_hwiso.h>
 #include <sbi/sbi_init.h>
 #include <sbi/sbi_ipi.h>
 #include <sbi/sbi_platform.h>
@@ -145,6 +146,8 @@ void __noreturn sbi_hsm_hart_start_finish(struct sbi_scratch *scratch,
 	unsigned long next_arg1;
 	unsigned long next_addr;
 	unsigned long next_mode;
+	struct sbi_domain *dom = sbi_domain_thishart_ptr();
+	struct sbi_domain *hart_dom = sbi_domain_hart_ptr(hartid);
 	struct sbi_hsm_data *hdata = sbi_scratch_offset_ptr(scratch,
 							    hart_data_offset);
 
@@ -156,6 +159,14 @@ void __noreturn sbi_hsm_hart_start_finish(struct sbi_scratch *scratch,
 	next_addr = scratch->next_addr;
 	next_mode = scratch->next_mode;
 	hsm_start_ticket_release(hdata);
+
+	sbi_printf("[HWISO] hart_start_finish: hartid=%u dom_this=%s dom_hart=%s\n",
+		   hartid,
+		   dom ? dom->name : "<null>",
+		   hart_dom ? hart_dom->name : "<null>");
+
+	if (dom)
+		sbi_hwiso_domain_enter(dom, NULL);
 
 	sbi_hart_switch_mode(hartid, next_arg1, next_addr, next_mode, false);
 }
