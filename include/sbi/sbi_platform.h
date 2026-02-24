@@ -50,6 +50,7 @@
 #include <sbi/sbi_version.h>
 #include <sbi/sbi_trap_ldst.h>
 
+struct sbi_domain;
 struct sbi_domain_memregion;
 struct sbi_ecall_return;
 struct sbi_trap_regs;
@@ -104,6 +105,27 @@ struct sbi_platform_operations {
 
 	/** Initialize (or populate) domains for the platform */
 	int (*domains_init)(void);
+
+	/**
+	 * Initialize platform-specific, system-level hardware isolation
+	 * features described by the DeviceTree.
+	 */
+	int (*hw_isolation_init)(void *fdt);
+
+	/**
+	 * Initialize per-domain hardware isolation configuration using
+	 * the DeviceTree domain instance node.
+	 */
+	int (*hw_isolation_domain_init)(void *fdt, int domain_offset,
+					struct sbi_domain *dom);
+
+	/** Apply hardware isolation configuration before switching in */
+	void (*hw_isolation_domain_enter)(const struct sbi_domain *target_dom,
+					  const struct sbi_domain *source_dom);
+
+	/** Cleanup hardware isolation configuration after switching out */
+	void (*hw_isolation_domain_exit)(const struct sbi_domain *source_dom,
+					 const struct sbi_domain *target_dom);
 
 	/** Initialize hw performance counters */
 	int (*pmu_init)(void);
@@ -517,6 +539,78 @@ static inline int sbi_platform_domains_init(const struct sbi_platform *plat)
 	if (plat && sbi_platform_ops(plat)->domains_init)
 		return sbi_platform_ops(plat)->domains_init();
 	return 0;
+}
+
+/**
+ * Initialize platform-specific hardware isolation features
+ *
+ * @param plat pointer to struct sbi_platform
+ * @param fdt pointer to DT blob (or NULL if not available)
+ *
+ * @return 0 on success and negative error code on failure
+ */
+static inline int sbi_platform_hw_isolation_init(
+					const struct sbi_platform *plat,
+					void *fdt)
+{
+	if (plat && sbi_platform_ops(plat)->hw_isolation_init)
+		return sbi_platform_ops(plat)->hw_isolation_init(fdt);
+	return 0;
+}
+
+/**
+ * Initialize per-domain hardware isolation configuration
+ *
+ * @param plat pointer to struct sbi_platform
+ * @param fdt pointer to DT blob (or NULL if not available)
+ * @param domain_offset DT node offset for domain instance
+ * @param dom pointer to struct sbi_domain
+ *
+ * @return 0 on success and negative error code on failure
+ */
+static inline int sbi_platform_hw_isolation_domain_init(
+					const struct sbi_platform *plat,
+					void *fdt, int domain_offset,
+					struct sbi_domain *dom)
+{
+	if (plat && sbi_platform_ops(plat)->hw_isolation_domain_init)
+		return sbi_platform_ops(plat)->hw_isolation_domain_init(
+					fdt, domain_offset, dom);
+	return 0;
+}
+
+/**
+ * Apply per-domain hardware isolation configuration
+ *
+ * @param plat pointer to struct sbi_platform
+ * @param target_dom pointer to target domain
+ * @param source_dom pointer to current domain
+ */
+static inline void sbi_platform_hw_isolation_domain_enter(
+					const struct sbi_platform *plat,
+					const struct sbi_domain *target_dom,
+					const struct sbi_domain *source_dom)
+{
+	if (plat && sbi_platform_ops(plat)->hw_isolation_domain_enter)
+		sbi_platform_ops(plat)->hw_isolation_domain_enter(
+					target_dom, source_dom);
+}
+
+/**
+ * Cleanup per-domain hardware isolation configuration
+ *
+ * @param plat pointer to struct sbi_platform
+ * @param source_dom pointer to current domain
+ * @param target_dom pointer to target domain
+ */
+static inline void sbi_platform_hw_isolation_domain_exit(
+					const struct sbi_platform *plat,
+					const struct sbi_domain *source_dom,
+					const struct sbi_domain *target_dom)
+{
+	if (plat && sbi_platform_ops(plat)->hw_isolation_domain_exit)
+		sbi_platform_ops(plat)->hw_isolation_domain_exit(
+					source_dom, target_dom);
 }
 
 /**
