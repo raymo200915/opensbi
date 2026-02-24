@@ -1,0 +1,52 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/chosen";
+		__overlay__ {
+			opensbi-domains {
+				compatible = "opensbi,domain,config";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				root: domain@0 {
+					compatible = "opensbi,domain,instance";
+					possible-harts = <&cpu0 &cpu1 &cpu2 &cpu3>;
+					regions = <&mem0 0x3f>;
+					boot-hart = <&cpu0>;
+
+					hw-isolation {
+						qemu-deny-mmio {
+							compatible = "opensbi,qemu-virt-deny-mmio";
+							deny-mmio = <0x00000000 0x10001000  0x00000000 0x00001000>;
+						};
+					};
+				};
+
+				guest0: domain@1 {
+					compatible = "opensbi,domain,instance";
+					possible-harts = <&cpu2>;
+					regions = <&mem0 0x3f>;
+					boot-hart = <&cpu2>;
+					next-addr = <0x00000000 0x80200000>;
+					next-mode = <0x1>;
+
+					hw-isolation {
+						qemu-deny-mmio {
+							compatible = "opensbi,qemu-virt-deny-mmio";
+							deny-mmio = <0x00000000 0x10000000  0x00000000 0x00010000>;
+						};
+					};
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/cpus/cpu@2";
+		__overlay__ {
+			opensbi-domain = <&guest0>;
+		};
+	};
+};
