@@ -17,6 +17,8 @@
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
+#include <sbi/sbi_hwiso.h>
+#include <sbi_utils/fdt/fdt_helper.h>
 
 /*
  * We allocate an extra element because sbi_domain_for_each() expects
@@ -695,11 +697,20 @@ int sbi_domain_finalize(struct sbi_scratch *scratch, u32 cold_hartid)
 	u32 i, dhart;
 	struct sbi_domain *dom;
 	const struct sbi_platform *plat = sbi_platform_ptr(scratch);
+	void *fdt = fdt_get_address();
 
 	/* Initialize and populate domains for the platform */
 	rc = sbi_platform_domains_init(plat);
 	if (rc) {
 		sbi_printf("%s: platform domains_init() failed (error %d)\n",
+			   __func__, rc);
+		return rc;
+	}
+
+	/* Configure system-level hardware isolation mechanisms at boot */
+	rc = sbi_hwiso_init(fdt);
+	if (rc) {
+		sbi_printf("%s: hw isolation init failed (error %d)\n",
 			   __func__, rc);
 		return rc;
 	}
