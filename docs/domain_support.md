@@ -201,6 +201,96 @@ The DT properties of a domain instance DT node are as follows:
   whether the domain instance is allowed to do system reset.
 * **system-suspend-allowed** (Optional) - A boolean flag representing
   whether the domain instance is allowed to do system suspend.
+* **hw-isolation** (Optional) - A child node acting as a container for
+  system-level hardware isolation mechanisms. Each child node represents a
+  single mechanism configured via its compatible string and properties.
+
+Hardware Isolation Hooks
+------------------------
+
+OpenSBI provides a system-level hardware isolation framework that dispatches
+all registered mechanisms in the following phases:
+
+* **init** - Runs at boot to configure system-level isolation features.
+* **domain_init** - Parses per-domain isolation configuration.
+* **domain_exit** - Runs before switching out of a domain.
+* **domain_enter** - Runs after switching into a domain.
+
+Hardware Isolation Device Tree Binding
+--------------------------------------
+
+The hardware isolation configuration is specified as an optional child node
+named **hw-isolation** under a domain instance node. The **hw-isolation**
+node is a container for one or more mechanism nodes.
+
+The DT properties of a hardware isolation container node are as follows:
+
+* **#address-cells** / **#size-cells** (Optional) - Standard container node
+  properties. They are not interpreted by OpenSBI.
+
+Each hardware isolation mechanism node has its own properties and compatible
+string. For QEMU virt deny-mmio, the node properties are:
+
+* **compatible** (Mandatory) - The compatible string of the hardware
+  isolation mechanism. For QEMU virt this should be
+  *"opensbi,qemu-virt-deny-mmio"*.
+* **deny-mmio** (Optional) - List of MMIO ranges to deny for the domain.
+  Each entry is a pair of 64-bit values (base, size). The size must be a
+  power-of-two and base must be size aligned. OpenSBI will program PMP
+  entries with no permissions for these ranges when entering the domain.
+
+Hardware Isolation Examples
+---------------------------
+
+Root domain with QEMU virt deny list:
+
+```text
+    chosen {
+        opensbi-domains {
+            compatible = "opensbi,domain,config";
+
+            root: domain@0 {
+                compatible = "opensbi,domain,instance";
+                possible-harts = <&cpu0 &cpu1 &cpu2 &cpu3>;
+                regions = <&mem0 0x3f>;
+                boot-hart = <&cpu0>;
+
+                hw-isolation {
+                    qemu-deny-mmio {
+                        compatible = "opensbi,qemu-virt-deny-mmio";
+                        deny-mmio = <0x00000000 0x10001000  0x00000000 0x00001000>;
+                    };
+                };
+            };
+        };
+    };
+```
+
+Non-root domain with QEMU virt deny list:
+
+```text
+    chosen {
+        opensbi-domains {
+            compatible = "opensbi,domain,config";
+
+            guest0: domain@1 {
+                compatible = "opensbi,domain,instance";
+                possible-harts = <&cpu2>;
+                regions = <&mem0 0x3f>;
+                boot-hart = <&cpu2>;
+                next-addr = <0x00000000 0x80200000>;
+                next-mode = <0x1>;
+
+                hw-isolation {
+                    qemu-deny-mmio {
+                        compatible = "opensbi,qemu-virt-deny-mmio";
+                        deny-mmio = <0x00000000 0x10000000  0x00000000 0x00010000>;
+                    };
+                };
+            };
+        };
+    };
+```
 
 ### Assigning HART To Domain Instance
 
