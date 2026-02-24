@@ -1,0 +1,124 @@
+/dts-v1/;
+/plugin/;
+
+/* Test-only overlay for exercising HWISO with a WG checker style binding. */
+/ {
+	fragment@0 {
+		target-path = "/chosen";
+		__overlay__ {
+			opensbi-domains {
+				compatible = "opensbi,domain,config";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				memregion0: memregion@0 {
+					compatible = "opensbi,domain,memregion";
+					base = <0x00000000 0x80000000>;
+					order = <0x1f>;
+				};
+
+				root: domain@0 {
+					compatible = "opensbi,domain,instance";
+					possible-harts = <0x3 0x1>;
+					regions = <&memregion0 0x3f>;
+					boot-hart = <0x3>;
+					next-addr = <0x00000000 0x80200000>;
+					next-arg1 = <0x00000000 0x82200000>;
+					next-mode = <0x1>;
+
+					hw-isolation {
+						wg-demo {
+							compatible = "sifive,wgchecker2";
+							worldguard,wid = <0>;
+							worldguard,widlist = <0 1 3>;
+						};
+					};
+				};
+
+				guest0: domain@1 {
+					compatible = "opensbi,domain,instance";
+					possible-harts = <0x1>;
+					regions = <&memregion0 0x3f>;
+					boot-hart = <0x1>;
+					next-addr = <0x00000000 0x80200000>;
+					next-mode = <0x1>;
+
+					hw-isolation {
+						wg-demo {
+							compatible = "sifive,wgchecker2";
+							worldguard,wid = <1>;
+							worldguard,widlist = <1 3>;
+						};
+					};
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/cpus/cpu@0";
+		__overlay__ {
+			opensbi-domain = <&root>;
+		};
+	};
+
+	fragment@2 {
+		target-path = "/cpus/cpu@1";
+		__overlay__ {
+			opensbi-domain = <&root>;
+		};
+	};
+
+	fragment@3 {
+		target-path = "/";
+		__overlay__ {
+			#address-cells = <2>;
+			#size-cells = <2>;
+
+			deviceA: wg-demo-device@10000000 {
+				compatible = "opensbi,wg-demo-device";
+				reg = <0x00000000 0x10000000 0x00000000 0x10000000>;
+
+				worldguard_cfg {
+					perms = <0x0 0xc0>;
+				};
+			};
+
+			deviceB: wg-demo-device@20000000 {
+				compatible = "opensbi,wg-demo-device";
+				reg = <0x00000000 0x20000000 0x00000000 0x10000000>;
+
+				worldguard_cfg {
+					perms = <0x0 0xc3>;
+				};
+			};
+
+			deviceC: wg-demo-device@30000000 {
+				compatible = "opensbi,wg-demo-device";
+				reg = <0x00000000 0x30000000 0x00000000 0x10000000>;
+
+				worldguard_cfg {
+					perms = <0x0 0xc0>;
+				};
+			};
+
+			wgchecker@100000 {
+				compatible = "sifive,wgchecker2";
+				reg = <0x00000000 0x00100000 0x00000000 0x00001000>;
+				sifive,subordinates = <&deviceA &deviceB &deviceC>;
+			};
+		};
+	};
+
+	fragment@4 {
+		target-path = "/memory@80000000";
+		__overlay__ {
+			worldguard_cfg {
+				reg = <0x00000000 0x80000000 0x00000000 0x40000000
+				       0x00000000 0xc0000000 0x00000000 0x01000000
+				       0x00000000 0xc1000000 0x00000000 0x3f000000>;
+				perms = <0x0 0xcf 0x0 0xcc 0x0 0xcf>;
+			};
+		};
+	};
+};

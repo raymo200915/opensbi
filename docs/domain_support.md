@@ -201,6 +201,151 @@ The DT properties of a domain instance DT node are as follows:
   whether the domain instance is allowed to do system reset.
 * **system-suspend-allowed** (Optional) - A boolean flag representing
   whether the domain instance is allowed to do system suspend.
+* **hw-isolation** (Optional) - A child node acting as a container for
+  system-level hardware isolation mechanisms. Each child node represents a
+  single mechanism configured via its compatible string and properties.
+
+Hardware Isolation Hooks
+------------------------
+
+OpenSBI provides a system-level hardware isolation framework that dispatches
+all registered mechanisms in the following phases:
+
+* **init** - Runs at boot to configure system-level isolation features.
+* **domain_init** - Parses per-domain isolation configuration.
+* **domain_exit** - Runs before switching out of a domain.
+* **domain_enter** - Runs after switching into a domain.
+
+Hardware Isolation Device Tree Binding
+--------------------------------------
+
+The hardware isolation configuration is specified as an optional child node
+named **hw-isolation** under a domain instance node. The **hw-isolation**
+node is a container for one or more mechanism nodes.
+
+The DT properties of a hardware isolation container node are as follows:
+
+* **#address-cells** / **#size-cells** (Optional) - Standard container node
+  properties. They are not interpreted by OpenSBI.
+
+Each hardware isolation mechanism has its own properties and compatible
+string. A mechanism can either use per-domain properties below the domain
+instance node, or parse system-level DT nodes describing isolation hardware.
+
+For the WorldGuard checker demo, OpenSBI parses WG-style system nodes:
+
+* **sifive,wgchecker2** - The compatible string of a WorldGuard checker node.
+* **sifive,subordinates** - List of phandles for devices controlled by the
+  checker.
+* **worldguard_cfg** - Child node of a memory or device node describing WG
+  policy for that resource.
+* **perms** - Permission bitmap pairs for the resource.
+* **reg** - For a memory **worldguard_cfg** node, the protected address
+  ranges. For a checker or device node, the standard DT register range.
+
+Domain nodes can optionally provide WG execution metadata under the
+**hw-isolation** container:
+
+* **worldguard,wid** - World ID selected when entering the domain.
+* **worldguard,widlist** - World IDs delegated to the domain.
+
+Hardware Isolation Examples
+---------------------------
+
+Root domain with WG execution metadata:
+
+```text
+    chosen {
+        opensbi-domains {
+            compatible = "opensbi,domain,config";
+
+            root: domain@0 {
+                compatible = "opensbi,domain,instance";
+                possible-harts = <&cpu0 &cpu1 &cpu2 &cpu3>;
+                regions = <&mem0 0x3f>;
+                boot-hart = <&cpu0>;
+
+                hw-isolation {
+                    wg-demo {
+                        compatible = "sifive,wgchecker2";
+                        worldguard,wid = <0>;
+                        worldguard,widlist = <0 1 3>;
+                    };
+                };
+            };
+        };
+    };
+```
+
+Non-root domain with WG execution metadata:
+
+```text
+    chosen {
+        opensbi-domains {
+            compatible = "opensbi,domain,config";
+
+            guest0: domain@1 {
+                compatible = "opensbi,domain,instance";
+                possible-harts = <&cpu2>;
+                regions = <&mem0 0x3f>;
+                boot-hart = <&cpu2>;
+                next-addr = <0x00000000 0x80200000>;
+                next-mode = <0x1>;
+
+                hw-isolation {
+                    wg-demo {
+                        compatible = "sifive,wgchecker2";
+                        worldguard,wid = <1>;
+                        worldguard,widlist = <1 3>;
+                    };
+                };
+            };
+        };
+    };
+```
+
+WG checker and protected resource example. These nodes remain in the normal
+system DT topology because they describe isolation hardware and protected
+resources, not OpenSBI domain instances:
+
+```text
+    deviceA: device@10000000 {
+        reg = <0x0 0x10000000 0x0 0x10000000>;
+        worldguard_cfg {
+            perms = <0x0 0xc0>;
+        };
+    };
+
+    deviceB: device@20000000 {
+        reg = <0x0 0x20000000 0x0 0x10000000>;
+        worldguard_cfg {
+            perms = <0x0 0xc3>;
+        };
+    };
+
+    deviceC: device@30000000 {
+        reg = <0x0 0x30000000 0x0 0x10000000>;
+        worldguard_cfg {
+            perms = <0x0 0xc0>;
+        };
+    };
+
+    wgchecker@100000 {
+        compatible = "sifive,wgchecker2";
+        reg = <0x0 0x00100000 0x0 0x1000>;
+        sifive,subordinates = <&deviceA &deviceB &deviceC>;
+    };
+
+    memory@80000000 {
+        reg = <0x0 0x80000000 0x0 0x80000000>;
+        worldguard_cfg {
+            reg = <0x0 0x80000000 0x0 0x40000000
+                   0x0 0xc0000000 0x0 0x01000000
+                   0x0 0xc1000000 0x0 0x3f000000>;
+            perms = <0x0 0xcf 0x0 0xcc 0x0 0xcf>;
+        };
+    };
+```
 
 ### Assigning HART To Domain Instance
 
