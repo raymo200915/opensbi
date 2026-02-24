@@ -18,6 +18,8 @@
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
+#include <sbi/sbi_hwiso.h>
+#include <sbi_utils/fdt/fdt_helper.h>
 
 SBI_LIST_HEAD(domain_list);
 
@@ -790,10 +792,27 @@ int sbi_domain_startup(struct sbi_scratch *scratch, u32 cold_hartid)
 	int rc;
 	u32 dhart;
 	struct sbi_domain *dom;
+	const void *fdt = fdt_get_address();
+
+	/* Configure system-level hardware isolation mechanisms at boot */
+	rc = sbi_hwiso_init(fdt);
+	if (rc) {
+		sbi_printf("%s: hw isolation init failed (error %d)\n",
+			   __func__, rc);
+		return rc;
+	}
 
 	/* Sanity checks */
 	if (!domain_finalized)
 		return SBI_EINVAL;
+
+	/* Prepare root domain hwiso contexts even without DT parsing */
+	rc = sbi_hwiso_domain_init(fdt, -1, &root);
+	if (rc) {
+		sbi_printf("%s: root hw isolation init failed (error %d)\n",
+			   __func__, rc);
+		return rc;
+	}
 
 	/* Startup boot HART of domains */
 	sbi_domain_for_each(dom) {

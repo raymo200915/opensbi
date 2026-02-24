@@ -15,6 +15,7 @@
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_hwiso.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi_utils/fdt/fdt_domain.h>
 #include <sbi_utils/fdt/fdt_helper.h>
@@ -483,6 +484,11 @@ static int __fdt_parse_domain(const void *fdt, int domain_offset, void *opaque)
 	else
 		dom->system_suspend_allowed = false;
 
+	/* Parse per-domain hardware isolation configuration */
+	err = sbi_hwiso_domain_init(fdt, domain_offset, dom);
+	if (err)
+		goto fail_free_all;
+
 	/* Find /cpus DT node */
 	cpus_offset = fdt_path_offset(fdt, "/cpus");
 	if (cpus_offset < 0) {
@@ -527,6 +533,7 @@ static int __fdt_parse_domain(const void *fdt, int domain_offset, void *opaque)
 	return 0;
 
 fail_free_all:
+	sbi_hwiso_domain_cleanup(dom);
 	sbi_free(mask);
 fail_free_regions:
 	sbi_free(dom->regions);

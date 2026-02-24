@@ -12,6 +12,7 @@
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_hart_protection.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_hwiso.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_string.h>
 #include <sbi/sbi_domain.h>
@@ -118,6 +119,10 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 
 	current_dom = ctx->dom;
 	target_dom = dom_ctx->dom;
+
+	/* Exit first so mechanisms can tear down current domain state. */
+	sbi_hwiso_domain_exit(current_dom, target_dom);
+
 	/* Assign current hart to target domain */
 	spin_lock(&current_dom->assigned_harts_lock);
 	sbi_hartmask_clear_hartindex(hartindex, &current_dom->assigned_harts);
@@ -128,6 +133,12 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	spin_lock(&target_dom->assigned_harts_lock);
 	sbi_hartmask_set_hartindex(hartindex, &target_dom->assigned_harts);
 	spin_unlock(&target_dom->assigned_harts_lock);
+
+	/*
+	 * Enter after PMP reconfiguration so mechanisms can rely on the
+	 * target domain's base isolation being in effect.
+	 */
+	sbi_hwiso_domain_enter(target_dom, current_dom);
 
 	/* Save current CSR context and restore target domain's CSR context */
 	ctx->sstatus	= csr_swap(CSR_SSTATUS, dom_ctx->sstatus);
