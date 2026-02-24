@@ -1,0 +1,69 @@
+/dts-v1/;
+/plugin/;
+
+/* Test-only overlay for exercising hwiso mechanism hooks on QEMU virt. */
+/ {
+	fragment@0 {
+		target-path = "/chosen";
+		__overlay__ {
+			opensbi-domains {
+				compatible = "opensbi,domain,config";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				memregion0: memregion@0 {
+					compatible = "opensbi,domain,memregion";
+					base = <0x00000000 0x80000000>;
+					order = <0x1f>;
+				};
+
+				root: domain@0 {
+					compatible = "opensbi,domain,instance";
+					possible-harts = <0x3 0x1>;
+					regions = <&memregion0 0x3f>;
+					boot-hart = <0x3>;
+					next-addr = <0x00000000 0x80200000>;
+					next-arg1 = <0x00000000 0x82200000>;
+					next-mode = <0x1>;
+
+					hw-isolation {
+						deny-mmio-demo {
+							compatible = "opensbi,deny-mmio-demo";
+							deny-mmio = <0x00000000 0x10001000  0x00000000 0x00001000>;
+						};
+					};
+				};
+
+				guest0: domain@1 {
+					compatible = "opensbi,domain,instance";
+					possible-harts = <0x1>;
+					regions = <&memregion0 0x3f>;
+					boot-hart = <0x1>;
+					next-addr = <0x00000000 0x80200000>;
+					next-mode = <0x1>;
+
+					hw-isolation {
+						deny-mmio-demo {
+							compatible = "opensbi,deny-mmio-demo";
+							deny-mmio = <0x00000000 0x10000000  0x00000000 0x00010000>;
+						};
+					};
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/cpus/cpu@0";
+		__overlay__ {
+			opensbi-domain = <&root>;
+		};
+	};
+
+	fragment@2 {
+		target-path = "/cpus/cpu@1";
+		__overlay__ {
+			opensbi-domain = <&root>;
+		};
+	};
+};
