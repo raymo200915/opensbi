@@ -12,6 +12,7 @@
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_hart.h>
+#include <sbi/sbi_heap.h>
 #include <sbi/sbi_hwiso.h>
 #include <sbi/sbi_math.h>
 #include <sbi/sbi_scratch.h>
@@ -37,6 +38,7 @@ static unsigned long qemu_hwiso_state_offset;
 
 static int qemu_hwiso_init(void *fdt)
 {
+	sbi_printf("qemu_hwiso_init: entry\n");
 	(void)fdt;
 
 	if (qemu_hwiso_state_offset)
@@ -97,6 +99,7 @@ static int qemu_hwiso_parse_node(void *fdt, int node_offset,
 static int qemu_hwiso_domain_init(void *fdt, int domain_offset,
 				  struct sbi_domain *dom, void **out_ctx)
 {
+	sbi_printf("qemu_hwiso_domain_init: entry\n");
 	int hoff, child, rc;
 	struct qemu_hwiso_ctx *ctx;
 
@@ -138,6 +141,7 @@ static int qemu_hwiso_domain_init(void *fdt, int domain_offset,
 static void qemu_hwiso_domain_exit(const struct sbi_domain *src,
 				   const struct sbi_domain *dst, void *ctx)
 {
+	sbi_printf("qemu_hwiso_domain_exit: entry\n");
 	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 	struct qemu_hwiso_hart_state *state;
 	u8 i;
@@ -165,6 +169,7 @@ static void qemu_hwiso_domain_exit(const struct sbi_domain *src,
 static void qemu_hwiso_domain_enter(const struct sbi_domain *dst,
 				    const struct sbi_domain *src, void *ctx)
 {
+	sbi_printf("qemu_hwiso_domain_enter: entry\n");
 	struct sbi_scratch *scratch = sbi_scratch_thishart_ptr();
 	struct qemu_hwiso_ctx *qctx = ctx;
 	struct qemu_hwiso_hart_state *state;
@@ -216,6 +221,7 @@ static void qemu_hwiso_domain_enter(const struct sbi_domain *dst,
 
 static void qemu_hwiso_domain_cleanup(struct sbi_domain *dom, void *ctx)
 {
+	sbi_printf("qemu_hwiso_domain_cleanup: entry\n");
 	(void)dom;
 	sbi_free(ctx);
 }
