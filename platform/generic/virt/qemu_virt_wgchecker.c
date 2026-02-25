@@ -1047,4 +1047,3 @@ int qemu_virt_hwiso_register(void *fdt)
 
 	return 0;
 }
-
