@@ -311,6 +311,7 @@ static int __fdt_iterate_each_host_irq(void *fdt, int domain_offset,
 				       void *opaque,
 				       int (*fn)(void *fdt, int domain_offset,
 				       u32 first_hwirq, u32 num_hwirq,
+				       u32 hartid,
 				       void *opaque))
 {
 	int len, rc;
@@ -326,27 +327,28 @@ static int __fdt_iterate_each_host_irq(void *fdt, int domain_offset,
 
 	/*
 	 * Get the hwirq / domain binding for routing.
-	 * Format: <first_hwirq count> ...
-	 * Each entry is 2 cells.
+	 * Format: <first_hwirq count hartid> ...
+	 * Each entry is 3 cells.
 	 */
 	p = fdt_getprop(fdt, domain_offset, "opensbi,host-irqs", &len);
 	if (!p)
 		return 0;
 
-	if (len < (int)(2 * sizeof(fdt32_t)) ||
-	    (len % (int)(2 * sizeof(fdt32_t))))
+	if (len < (int)(3 * sizeof(fdt32_t)) ||
+	    (len % (int)(3 * sizeof(fdt32_t))))
 		return SBI_EINVAL;
 
-	count = (u32)len / (2 * sizeof(fdt32_t));
+	count = (u32)len / (3 * sizeof(fdt32_t));
 
 	for (i = 0; i < count; i++) {
-		u32 first = fdt32_to_cpu(p[i * 2 + 0]);
-		u32 num   = fdt32_to_cpu(p[i * 2 + 1]);
+		u32 first = fdt32_to_cpu(p[i * 3 + 0]);
+		u32 num   = fdt32_to_cpu(p[i * 3 + 1]);
+		u32 hartid = fdt32_to_cpu(p[i * 3 + 2]);
 
 		if (!num)
 			return SBI_EINVAL;
 
-		rc = fn(fdt, domain_offset, first, num, opaque);
+		rc = fn(fdt, domain_offset, first, num, hartid, opaque);
 		if (rc)
 			return rc;
 	}
@@ -356,11 +358,12 @@ static int __fdt_iterate_each_host_irq(void *fdt, int domain_offset,
 
 static int __fdt_add_one_host_irq_range(void *fdt, int domain_offset,
 					u32 first_hwirq, u32 num_hwirq,
+					u32 hartid,
 					void *opaque)
 {
 	struct sbi_domain *dom = (struct sbi_domain *)opaque;
 
-	return sbi_virq_route_add_range(dom, first_hwirq, num_hwirq);
+	return sbi_virq_route_add_range(dom, first_hwirq, num_hwirq, hartid);
 }
 
 static int __fdt_bind_irq(const void *fdt, int domain_offset,
