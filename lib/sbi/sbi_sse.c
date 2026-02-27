@@ -946,6 +946,11 @@ int sbi_sse_inject_event(uint32_t event_id)
 	return sse_inject_event(event_id, current_hartid());
 }
 
+int sbi_sse_inject_event_to_hart(uint32_t event_id, unsigned long hartid)
+{
+	return sse_inject_event(event_id, hartid);
+}
+
 int sbi_sse_add_event(uint32_t event_id, const struct sbi_sse_cb_ops *cb_ops)
 {
 	struct sse_event_info *info;

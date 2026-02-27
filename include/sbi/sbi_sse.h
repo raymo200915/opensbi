@@ -67,6 +67,7 @@ int sbi_sse_add_event(uint32_t event_id, const struct sbi_sse_cb_ops *cb_ops);
  * @return 0 on success, error otherwise
  */
 int sbi_sse_inject_event(uint32_t event_id);
+int sbi_sse_inject_event_to_hart(uint32_t event_id, unsigned long hartid);
 
 void sbi_sse_process_pending_events(struct sbi_trap_regs *regs);
 
