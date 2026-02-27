@@ -804,6 +804,30 @@ int sbi_domain_startup(struct sbi_scratch *scratch, u32 cold_hartid)
 
 	/* Startup boot HART of domains */
 	sbi_domain_for_each(dom) {
+		u32 boot_hartindex = sbi_hartid_to_hartindex(dom->boot_hartid);
+		bool boot_assigned = false;
+
+		if (sbi_hartindex_valid(boot_hartindex)) {
+			spin_lock(&dom->assigned_harts_lock);
+			boot_assigned = sbi_hartmask_test_hartindex(
+				boot_hartindex, &dom->assigned_harts);
+			spin_unlock(&dom->assigned_harts_lock);
+		}
+
+		if (!boot_assigned) {
+			u32 new_hartid = -1U;
+
+			spin_lock(&dom->assigned_harts_lock);
+			sbi_hartmask_for_each_hartindex(dhart, &dom->assigned_harts) {
+				new_hartid = sbi_hartindex_to_hartid(dhart);
+				break;
+			}
+			spin_unlock(&dom->assigned_harts_lock);
+
+			if (new_hartid != -1U)
+				dom->boot_hartid = new_hartid;
+		}
+
 		/* Domain boot HART index */
 		dhart = sbi_hartid_to_hartindex(dom->boot_hartid);
 
