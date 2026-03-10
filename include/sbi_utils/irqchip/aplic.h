@@ -47,6 +47,7 @@ struct aplic_data {
 	struct aplic_msicfg_data msicfg_smode;
 	struct aplic_delegate_data delegate[APLIC_MAX_DELEGATE];
 	u32 *idc_map;
+	u32 *hwirq_target_hartindex;
 };
 
 int aplic_cold_irqchip_init(struct aplic_data *aplic);
