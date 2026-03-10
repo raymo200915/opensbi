@@ -13,6 +13,8 @@
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_scratch.h>
+#include <sbi_utils/fdt/fdt_domain.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <sbi_utils/irqchip/fdt_irqchip.h>
 #include <sbi_utils/irqchip/aplic.h>
@@ -54,6 +56,68 @@ static int irqchip_aplic_update_idc_map(const void *fdt, int nodeoff,
 	return 0;
 }
 
+struct hwirq_target_fill_info {
+	struct aplic_data *pd;
+};
+
+static u32 irqchip_aplic_domain_boot_hartindex(void *fdt, int domain_offset)
+{
+	int len, cpu_offset;
+	const fdt32_t *val;
+
+	val = fdt_getprop(fdt, domain_offset, "boot-hart", &len);
+	if (val && len >= 4) {
+		cpu_offset = fdt_node_offset_by_phandle(fdt,
+							fdt32_to_cpu(*val));
+		if (cpu_offset >= 0) {
+			u32 hartid;
+			if (!fdt_parse_hart_id(fdt, cpu_offset, &hartid)) {
+				u32 hidx = sbi_hartid_to_hartindex(hartid);
+				if (sbi_hartindex_valid(hidx))
+					return hidx;
+			}
+		}
+	}
+
+	return current_hartindex();
+}
+
+static int irqchip_aplic_fill_hwirq_targets(void *fdt, int domain_offset,
+					    void *opaque)
+{
+	int len;
+	const fdt32_t *val;
+	struct hwirq_target_fill_info *info = opaque;
+	struct aplic_data *pd;
+	u32 boot_hartindex;
+
+	if (!fdt || !info || !info->pd)
+		return 0;
+
+	pd = info->pd;
+	boot_hartindex = irqchip_aplic_domain_boot_hartindex(fdt, domain_offset);
+
+	val = fdt_getprop(fdt, domain_offset, "opensbi,host-irqs", &len);
+	if (val && len >= 8) {
+		u32 i, pairs = len / 8;
+		for (i = 0; i < pairs; i++) {
+			u32 first = fdt32_to_cpu(val[i * 2]);
+			u32 count = fdt32_to_cpu(val[i * 2 + 1]);
+			u32 last = first + count - 1;
+			u32 hwirq;
+
+			for (hwirq = first; hwirq <= last; hwirq++) {
+				if (hwirq == 0 || hwirq > pd->num_source)
+					continue;
+				if (pd->hwirq_target_hartindex[hwirq] == -1U)
+					pd->hwirq_target_hartindex[hwirq] = boot_hartindex;
+			}
+		}
+	}
+
+	return 0;
+}
+
 static int irqchip_aplic_cold_init(const void *fdt, int nodeoff,
 				   const struct fdt_match *match)
 {
@@ -85,6 +149,28 @@ static int irqchip_aplic_cold_init(const void *fdt, int nodeoff,
 			goto fail_free_idc_map;
 	}
 
+	/* Precompute target hartindex per HWIRQ from DT. */
+	if (pd->targets_mmode) {
+		struct hwirq_target_fill_info info = {
+			.pd = pd,
+		};
+		u32 i;
+
+		pd->hwirq_target_hartindex =
+			sbi_zalloc(sizeof(*pd->hwirq_target_hartindex) *
+				   (pd->num_source + 1));
+		if (!pd->hwirq_target_hartindex) {
+			rc = SBI_ENOMEM;
+			goto fail_free_idc_map;
+		}
+
+		for (i = 0; i <= pd->num_source; i++)
+			pd->hwirq_target_hartindex[i] = -1U;
+
+		fdt_iterate_each_domain((void *)fdt, &info,
+					irqchip_aplic_fill_hwirq_targets);
+	}
+
 	rc = aplic_cold_irqchip_init(pd);
 	if (rc)
 		goto fail_free_idc_map;
@@ -93,6 +179,8 @@ static int irqchip_aplic_cold_init(const void *fdt, int nodeoff,
 	return 0;
 
 fail_free_idc_map:
+	if (pd->hwirq_target_hartindex)
+		sbi_free(pd->hwirq_target_hartindex);
 	if (pd->num_idc)
 		sbi_free(pd->idc_map);
 fail_free_data:
