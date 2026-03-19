@@ -23,6 +23,7 @@
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_pmu.h>
 #include <sbi/sbi_sse.h>
+#include <sbi/sbi_virq.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_slist.h>
 #include <sbi/sbi_string.h>
@@ -863,6 +864,9 @@ int sbi_sse_complete(struct sbi_trap_regs *regs, struct sbi_ecall_return *out)
 	}
 	spin_unlock(&state->enabled_event_lock);
 
+	if (!ret)
+		sbi_virq_return_to_prev_if_needed();
+
 	return ret;
 }
 
@@ -927,6 +931,9 @@ int sbi_sse_hart_unmask(void)
 		return SBI_EALREADY_STARTED;
 
 	state->masked = false;
+
+	/* Notify S-mode if a deferred VIRQ notify is pending */
+	sbi_virq_notify_smode_deferred_thishart();
 
 	return SBI_SUCCESS;
 }
