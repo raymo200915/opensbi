@@ -29,6 +29,30 @@ int sbi_domain_context_enter(struct sbi_domain *dom);
 int sbi_domain_context_exit(void);
 
 /**
+ * Exit the current domain context and return to the previous context
+ * if one exists. This will not attempt to start other domains.
+ *
+ * @return 0 on success and negative error code on failure
+ */
+int sbi_domain_context_exit_to_prev(void);
+
+void sbi_domain_context_request_return_to_prev(void);
+bool sbi_domain_context_need_return_to_prev(void);
+void sbi_domain_context_mark_switched(void);
+bool sbi_domain_context_consume_switched(void);
+
+/**
+ * Mark a pending S-mode notification for a target domain context.
+ *
+ * @param dom pointer to domain
+ * @param hartindex hart index
+ *
+ * @return true if notification was already pending, false otherwise
+ */
+bool sbi_domain_context_pending_notify_smode(struct sbi_domain *dom,
+					     u32 hartindex);
+
+/**
  * Initialize domain context support
  *
  * @return 0 on success and negative error code on failure
