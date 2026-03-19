@@ -215,6 +215,8 @@ struct sbi_domain {
 	bool system_suspend_allowed;
 	/** Identifies whether to include the firmware region */
 	bool fw_region_inited;
+	/** Whether to notify S-mode for VIRQ couriering */
+	bool virq_seip_notify;
 };
 
 /** The root domain instance */

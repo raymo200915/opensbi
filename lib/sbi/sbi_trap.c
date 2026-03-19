@@ -24,6 +24,8 @@
 #include <sbi/sbi_sse.h>
 #include <sbi/sbi_timer.h>
 #include <sbi/sbi_trap.h>
+#include <sbi/sbi_virq.h>
+#include <sbi/sbi_domain_context.h>
 
 static void sbi_trap_error_one(const struct sbi_trap_context *tcntx,
 			       const char *prefix, u32 hartid, u32 depth)
@@ -235,7 +237,10 @@ static int sbi_trap_nonaia_irq(unsigned long irq)
 {
 	switch (irq) {
 	case IRQ_M_TIMER:
-		sbi_timer_process();
+		if (sbi_virq_return_timer_pending())
+			sbi_virq_return_to_prev_from_timer();
+		else
+			sbi_timer_process();
 		break;
 	case IRQ_M_SOFT:
 		sbi_ipi_process();
@@ -262,7 +267,10 @@ static int sbi_trap_aia_irq(void)
 		mtopi = mtopi >> TOPI_IID_SHIFT;
 		switch (mtopi) {
 		case IRQ_M_TIMER:
-			sbi_timer_process();
+			if (sbi_virq_return_timer_pending())
+				sbi_virq_return_to_prev_from_timer();
+			else
+				sbi_timer_process();
 			break;
 		case IRQ_M_SOFT:
 			sbi_ipi_process();
@@ -371,6 +379,20 @@ trap_done:
 
 	if (sbi_mstatus_prev_mode(regs->mstatus) != PRV_M)
 		sbi_sse_process_pending_events(regs);
+
+	if (sbi_domain_context_need_return_to_prev()) {
+		int rc = sbi_domain_context_exit_to_prev();
+		if (rc && rc != SBI_ENOENT)
+			sbi_printf("return_to_prev failed, rc=%d\n",
+				   rc);
+	}
+
+	if (sbi_domain_context_consume_switched()) {
+		struct sbi_trap_context *newctx = sbi_trap_get_context(scratch);
+
+		sbi_trap_set_context(scratch, newctx->prev_context);
+		return newctx;
+	}
 
 	sbi_trap_set_context(scratch, tcntx->prev_context);
 	return tcntx;
