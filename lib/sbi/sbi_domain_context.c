@@ -42,6 +42,8 @@ struct hart_context {
 	unsigned long sip;
 	/** Supervisor address translation and protection register */
 	unsigned long satp;
+	/** Machine interrupt delegation register */
+	unsigned long mideleg;
 	/** Counter-enable register */
 	unsigned long scounteren;
 	/** Supervisor environment configuration register */
@@ -58,6 +60,7 @@ struct hart_context {
 };
 
 static struct sbi_domain_data dcpriv;
+static unsigned long sbi_domain_defer_return_mask;
 
 static inline struct hart_context *hart_context_get(struct sbi_domain *dom,
 						    u32 hartindex)
@@ -111,6 +114,10 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 
 	current_dom = ctx->dom;
 	target_dom = dom_ctx->dom;
+
+	sbi_printf("[domain] switch hart%u %s -> %s (mideleg=0x%lx)\n",
+		   hartindex, current_dom->name, target_dom->name,
+		   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
 	/* Assign current hart to target domain */
 	spin_lock(&current_dom->assigned_harts_lock);
 	sbi_hartmask_clear_hartindex(hartindex, &current_dom->assigned_harts);
@@ -126,16 +133,31 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	sbi_hart_protection_unconfigure(scratch);
 	sbi_hart_protection_configure(scratch);
 
-	/* Save current CSR context and restore target domain's CSR context */
+	/*
+	 * Save current CSR context and restore target domain's CSR context.
+	 *
+	 * If the trap came from S-mode (MPP=S), MEPC holds the S-mode return
+	 * point. In that case, save MEPC as the SEPC for the current domain
+	 * so returning resumes correctly after a VIRQ-driven domain switch.
+	 */
 	ctx->sstatus	= csr_swap(CSR_SSTATUS, dom_ctx->sstatus);
 	ctx->sie	= csr_swap(CSR_SIE, dom_ctx->sie);
 	ctx->stvec	= csr_swap(CSR_STVEC, dom_ctx->stvec);
 	ctx->sscratch	= csr_swap(CSR_SSCRATCH, dom_ctx->sscratch);
-	ctx->sepc	= csr_swap(CSR_SEPC, dom_ctx->sepc);
+	{
+		unsigned long cur_sepc = csr_read(CSR_SEPC);
+		if (((csr_read(CSR_MSTATUS) & MSTATUS_MPP) >>
+		     MSTATUS_MPP_SHIFT) == PRV_S)
+			cur_sepc = csr_read(CSR_MEPC);
+		ctx->sepc = cur_sepc;
+		csr_write(CSR_SEPC, dom_ctx->sepc);
+	}
 	ctx->scause	= csr_swap(CSR_SCAUSE, dom_ctx->scause);
 	ctx->stval	= csr_swap(CSR_STVAL, dom_ctx->stval);
 	ctx->sip	= csr_swap(CSR_SIP, dom_ctx->sip);
 	ctx->satp	= csr_swap(CSR_SATP, dom_ctx->satp);
+	if (misa_extension('S'))
+		ctx->mideleg = csr_swap(CSR_MIDELEG, dom_ctx->mideleg);
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_10)
 		ctx->scounteren = csr_swap(CSR_SCOUNTEREN, dom_ctx->scounteren);
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12)
@@ -146,13 +168,31 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	/* Save current trap state and restore target domain's trap state */
 	trap_ctx = sbi_trap_get_context(scratch);
 	sbi_memcpy(&ctx->trap_ctx, trap_ctx, sizeof(*trap_ctx));
+	if (((csr_read(CSR_MSTATUS) & MSTATUS_MPP) >> MSTATUS_MPP_SHIFT) ==
+	    PRV_S) {
+		/* Preserve S-mode return PC in the saved trap context */
+		ctx->trap_ctx.regs.mepc = ctx->sepc;
+	}
+	/* Ensure M-mode trap context fields are refreshed */
+	ctx->trap_ctx.regs.mepc = csr_read(CSR_MEPC);
+	ctx->trap_ctx.regs.mstatus = csr_read(CSR_MSTATUS);
 	sbi_memcpy(trap_ctx, &dom_ctx->trap_ctx, sizeof(*trap_ctx));
+	if (((csr_read(CSR_MSTATUS) & MSTATUS_MPP) >> MSTATUS_MPP_SHIFT) ==
+	    PRV_S) {
+		/* Ensure target trap context returns to its S-mode PC */
+		trap_ctx->regs.mepc = dom_ctx->sepc;
+	}
+	/* Keep CSR_MEPC aligned with the active trap context */
+	csr_write(CSR_MEPC, trap_ctx->regs.mepc);
 
 	/* Mark current context structure initialized because context saved */
 	ctx->initialized = true;
 
 	/* If target domain context is not initialized or runnable */
 	if (!dom_ctx->initialized) {
+		sbi_printf("[domain] first-entry %s on hart%u (mideleg=0x%lx)\n",
+			   target_dom->name, hartindex,
+			   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
 		/* Startup boot HART of target domain */
 		if (current_hartid() == target_dom->boot_hartid)
 			sbi_hart_switch_mode(target_dom->boot_hartid,
@@ -182,6 +222,18 @@ static int hart_context_init(u32 hartindex)
 
 		/* Bind context and domain */
 		ctx->dom = dom;
+		/*
+		 * Default MIDELEG policy: root domain keeps SEI delegated;
+		 * non-root domains keep SEI delegated only when VIRQ uses
+		 * mip.SEIP for notification.
+		 */
+		if (misa_extension('S')) {
+			unsigned long mideleg = csr_read(CSR_MIDELEG);
+			if (dom == &root || dom->virq_seip_notify)
+				ctx->mideleg = mideleg | MIP_SEIP;
+			else
+				ctx->mideleg = mideleg & ~MIP_SEIP;
+		}
 		hart_context_set(dom, hartindex, ctx);
 	}
 
@@ -269,6 +321,51 @@ int sbi_domain_context_exit(void)
 		dom_ctx = hart_context_get(&root, hartindex);
 
 	return switch_to_next_domain_context(ctx, dom_ctx);
+}
+
+int sbi_domain_context_exit_to_prev(void)
+{
+	struct hart_context *ctx = hart_context_thishart_get();
+	struct hart_context *dom_ctx;
+
+	if (!ctx)
+		return SBI_EINVAL;
+
+	dom_ctx = ctx->prev_ctx;
+	if (!dom_ctx)
+		return SBI_ENOENT;
+
+	/*
+	 * Returning to a previous domain implies it has already executed,
+	 * so its context is runnable even if not marked initialized.
+	 */
+	dom_ctx->initialized = true;
+
+	sbi_printf("[domain] return hart%lu %s -> %s (mideleg=0x%lx)\n",
+		   (unsigned long)current_hartindex(),
+		   ctx->dom->name, dom_ctx->dom->name,
+		   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
+
+	/* Clear prev context to avoid unintended re-entry */
+	ctx->prev_ctx = NULL;
+
+	return switch_to_next_domain_context(ctx, dom_ctx);
+}
+
+void sbi_domain_context_request_return_to_prev(void)
+{
+	sbi_domain_defer_return_mask |= (1UL << current_hartindex());
+}
+
+bool sbi_domain_context_need_return_to_prev(void)
+{
+	u32 hartindex = current_hartindex();
+	bool need = !!(sbi_domain_defer_return_mask & (1UL << hartindex));
+
+	if (need)
+		sbi_domain_defer_return_mask &= ~(1UL << hartindex);
+
+	return need;
 }
 
 int sbi_domain_context_init(void)
