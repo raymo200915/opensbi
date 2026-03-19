@@ -29,6 +29,14 @@ int sbi_domain_context_enter(struct sbi_domain *dom);
 int sbi_domain_context_exit(void);
 
 /**
+ * Exit the current domain context and return to the previous context
+ * if one exists. This will not attempt to start other domains.
+ *
+ * @return 0 on success and negative error code on failure
+ */
+int sbi_domain_context_exit_to_prev(void);
+
+/**
  * Initialize domain context support
  *
  * @return 0 on success and negative error code on failure
