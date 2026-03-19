@@ -42,6 +42,8 @@ struct hart_context {
 	unsigned long sip;
 	/** Supervisor address translation and protection register */
 	unsigned long satp;
+	/** Machine interrupt delegation register */
+	unsigned long mideleg;
 	/** Counter-enable register */
 	unsigned long scounteren;
 	/** Supervisor environment configuration register */
@@ -111,6 +113,10 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 
 	current_dom = ctx->dom;
 	target_dom = dom_ctx->dom;
+
+	sbi_printf("[domain] switch hart%u %s -> %s (mideleg=0x%lx)\n",
+		   hartindex, current_dom->name, target_dom->name,
+		   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
 	/* Assign current hart to target domain */
 	spin_lock(&current_dom->assigned_harts_lock);
 	sbi_hartmask_clear_hartindex(hartindex, &current_dom->assigned_harts);
@@ -136,6 +142,8 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	ctx->stval	= csr_swap(CSR_STVAL, dom_ctx->stval);
 	ctx->sip	= csr_swap(CSR_SIP, dom_ctx->sip);
 	ctx->satp	= csr_swap(CSR_SATP, dom_ctx->satp);
+	if (misa_extension('S'))
+		ctx->mideleg = csr_swap(CSR_MIDELEG, dom_ctx->mideleg);
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_10)
 		ctx->scounteren = csr_swap(CSR_SCOUNTEREN, dom_ctx->scounteren);
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12)
@@ -153,6 +161,9 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 
 	/* If target domain context is not initialized or runnable */
 	if (!dom_ctx->initialized) {
+		sbi_printf("[domain] first-entry %s on hart%u (mideleg=0x%lx)\n",
+			   target_dom->name, hartindex,
+			   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
 		/* Startup boot HART of target domain */
 		if (current_hartid() == target_dom->boot_hartid)
 			sbi_hart_switch_mode(target_dom->boot_hartid,
@@ -182,6 +193,17 @@ static int hart_context_init(u32 hartindex)
 
 		/* Bind context and domain */
 		ctx->dom = dom;
+		/*
+		 * Default MIDELEG policy: root domain keeps SEI delegated;
+		 * other domains clear SEI so external IRQs trap to M-mode.
+		 */
+		if (misa_extension('S')) {
+			unsigned long mideleg = csr_read(CSR_MIDELEG);
+			if (dom == &root)
+				ctx->mideleg = mideleg | MIP_SEIP;
+			else
+				ctx->mideleg = mideleg & ~MIP_SEIP;
+		}
 		hart_context_set(dom, hartindex, ctx);
 	}
 
@@ -267,6 +289,29 @@ int sbi_domain_context_exit(void)
 	/* Take the root domain context if fail to find */
 	if (!dom_ctx)
 		dom_ctx = hart_context_get(&root, hartindex);
+
+	return switch_to_next_domain_context(ctx, dom_ctx);
+}
+
+int sbi_domain_context_exit_to_prev(void)
+{
+	struct hart_context *ctx = hart_context_thishart_get();
+	struct hart_context *dom_ctx;
+
+	if (!ctx)
+		return SBI_EINVAL;
+
+	dom_ctx = ctx->prev_ctx;
+	if (!dom_ctx)
+		return SBI_ENOENT;
+
+	sbi_printf("[domain] return hart%lu %s -> %s (mideleg=0x%lx)\n",
+		   (unsigned long)current_hartindex(),
+		   ctx->dom->name, dom_ctx->dom->name,
+		   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
+
+	/* Clear prev context to avoid unintended re-entry */
+	ctx->prev_ctx = NULL;
 
 	return switch_to_next_domain_context(ctx, dom_ctx);
 }
