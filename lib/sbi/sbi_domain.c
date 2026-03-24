@@ -60,6 +60,21 @@ void sbi_update_hartindex_to_domain(u32 hartindex, struct sbi_domain *dom)
 	sbi_scratch_write_type(scratch, void *, domain_hart_ptr_offset, dom);
 }
 
+struct sbi_domain *sbi_domain_find_by_name(const char *name)
+{
+	struct sbi_domain *dom;
+
+	if (!name)
+		return NULL;
+
+	sbi_domain_for_each(dom) {
+		if (!sbi_strncmp(dom->name, name, sizeof(dom->name)))
+			return dom;
+	}
+
+	return NULL;
+}
+
 bool sbi_domain_is_assigned_hart(const struct sbi_domain *dom, u32 hartindex)
 {
 	bool ret;

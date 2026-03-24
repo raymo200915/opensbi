@@ -232,6 +232,9 @@ struct sbi_domain *sbi_hartindex_to_domain(u32 hartindex);
 /** Update HART local pointer to point to specified domain */
 void sbi_update_hartindex_to_domain(u32 hartindex, struct sbi_domain *dom);
 
+/** Find domain by DT node name (domain name) */
+struct sbi_domain *sbi_domain_find_by_name(const char *name);
+
 /** Get pointer to sbi_domain for current HART */
 #define sbi_domain_thishart_ptr() \
 	sbi_hartindex_to_domain(current_hartindex())
