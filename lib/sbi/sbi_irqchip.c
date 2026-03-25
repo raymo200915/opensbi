@@ -12,6 +12,7 @@
 #include <sbi/sbi_irqchip.h>
 #include <sbi/sbi_list.h>
 #include <sbi/sbi_platform.h>
+#include <sbi/riscv_asm.h>
 
 /** Internal irqchip hardware interrupt data */
 struct sbi_irqchip_hwirq_data {
@@ -123,7 +124,7 @@ int sbi_irqchip_raw_handler_default(struct sbi_irqchip_device *chip, u32 hwirq)
 	sbi_printf("[IRQCHIP] Calling hwirq %u raw handler callback\n", hwirq);
 	rc = h->callback(hwirq, h->priv);
 
-	if (chip->hwirq_eoi) {
+	if (chip->hwirq_eoi && rc != SBI_EALREADY) {
 		sbi_printf("[IRQCHIP] Calling EOI of hwirq %u\n", hwirq);
 		chip->hwirq_eoi(chip, hwirq);
 	}
@@ -307,4 +308,27 @@ void sbi_irqchip_exit(struct sbi_scratch *scratch)
 {
 	if (!sbi_list_empty(&irqchip_list))
 		csr_clear(CSR_MIE, MIP_MEIP);
+}
+
+int sbi_irqchip_notify_smode_set(void)
+{
+	unsigned long mip_before;
+	unsigned long mip_after;
+
+	mip_before = csr_read(CSR_MIP);
+	csr_set(CSR_MIP, MIP_SEIP);
+	mip_after = csr_read(CSR_MIP);
+	sbi_printf("[IRQCHIP] Set mip.SEIP (mip before=0x%lx, after=0x%lx)\n",
+		   mip_before, mip_after);
+	return 0;
+}
+
+void sbi_irqchip_notify_smode_clear(void)
+{
+	csr_clear(CSR_MIP, MIP_SEIP);
+}
+
+bool sbi_irqchip_notify_smode_get(void)
+{
+	return !!(csr_read(CSR_MIP) & MIP_SEIP);
 }

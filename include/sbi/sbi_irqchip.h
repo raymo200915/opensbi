@@ -113,4 +113,28 @@ int sbi_irqchip_init(struct sbi_scratch *scratch, bool cold_boot);
 /** Exit interrupt controllers */
 void sbi_irqchip_exit(struct sbi_scratch *scratch);
 
+/**
+ * Notify S-mode for a pending virtual interrupt on this hart.
+ *
+ * The irqchip layer abstracts the notification mechanism; on platforms that
+ * use SEIP, this sets mip.SEIP.
+ */
+int sbi_irqchip_notify_smode_set(void);
+
+/**
+ * Clear S-mode notification for virtual interrupts on this hart.
+ *
+ * The irqchip layer abstracts the notification mechanism; on platforms that
+ * use SEIP, this clears mip.SEIP.
+ */
+void sbi_irqchip_notify_smode_clear(void);
+
+/**
+ * Read S-mode notification state for virtual interrupts on this hart.
+ *
+ * The irqchip layer abstracts the notification mechanism; on platforms that
+ * use SEIP, this reads mip.SEIP.
+ */
+bool sbi_irqchip_notify_smode_get(void);
+
 #endif
