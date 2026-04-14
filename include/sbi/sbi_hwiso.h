@@ -12,8 +12,7 @@
 #define __SBI_HWISO_H__
 
 #include <sbi/sbi_types.h>
-
-struct sbi_domain;
+#include <sbi/sbi_domain.h>
 
 struct sbi_hwiso_ops {
 	const char *name;

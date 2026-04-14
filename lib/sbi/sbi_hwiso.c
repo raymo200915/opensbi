@@ -10,7 +10,6 @@
 
 #include <libfdt.h>
 #include <sbi/sbi_console.h>
-#include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_hwiso.h>
