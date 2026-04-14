@@ -122,7 +122,7 @@ static int qemu_hwiso_domain_init(void *fdt, int domain_offset,
 	fdt_for_each_subnode(child, fdt, hoff) {
 		if (fdt_node_check_compatible(
 				fdt, child,
-				"opensbi,qemu-virt-deny-mmio"))
+				"opensbi,deny-mmio-demo"))
 			continue;
 
 		ctx = sbi_zalloc(sizeof(*ctx));
@@ -257,7 +257,7 @@ static void qemu_hwiso_domain_cleanup(struct sbi_domain *dom, void *ctx)
 }
 
 static const struct sbi_hwiso_ops qemu_virt_deny_mmio_ops = {
-	.name = "opensbi,qemu-virt-deny-mmio",
+	.name = "opensbi,deny-mmio-demo",
 	.init = qemu_hwiso_init,
 	.domain_init = qemu_hwiso_domain_init,
 	.domain_exit = qemu_hwiso_domain_exit,
