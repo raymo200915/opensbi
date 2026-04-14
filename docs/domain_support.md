@@ -232,8 +232,8 @@ Each hardware isolation mechanism node has its own properties and compatible
 string. For QEMU virt deny-mmio, the node properties are:
 
 * **compatible** (Mandatory) - The compatible string of the hardware
-  isolation mechanism. For QEMU virt this should be
-  *"opensbi,qemu-virt-deny-mmio"*.
+  isolation mechanism. For the deny-mmio demo this should be
+  *"opensbi,deny-mmio-demo"*.
 * **deny-mmio** (Optional) - List of MMIO ranges to deny for the domain.
   Each entry is a pair of 64-bit values (base, size). The size must be a
   power-of-two and base must be size aligned. OpenSBI will program PMP
@@ -256,8 +256,8 @@ Root domain with QEMU virt deny list:
                 boot-hart = <&cpu0>;
 
                 hw-isolation {
-                    qemu-deny-mmio {
-                        compatible = "opensbi,qemu-virt-deny-mmio";
+                    deny-mmio-demo {
+                        compatible = "opensbi,deny-mmio-demo";
                         deny-mmio = <0x00000000 0x10001000  0x00000000 0x00001000>;
                     };
                 };
@@ -282,8 +282,8 @@ Non-root domain with QEMU virt deny list:
                 next-mode = <0x1>;
 
                 hw-isolation {
-                    qemu-deny-mmio {
-                        compatible = "opensbi,qemu-virt-deny-mmio";
+                    deny-mmio-demo {
+                        compatible = "opensbi,deny-mmio-demo";
                         deny-mmio = <0x00000000 0x10000000  0x00000000 0x00010000>;
                     };
                 };
