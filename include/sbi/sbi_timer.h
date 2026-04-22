@@ -89,6 +89,12 @@ void sbi_timer_set_delta_upper(ulong delta_upper);
 /** Start timer event for current HART */
 void sbi_timer_event_start(u64 next_event);
 
+/** Start M-mode timer event for current HART */
+void sbi_timer_event_start_mmode(u64 next_event);
+
+/** Stop M-mode timer event for current HART */
+void sbi_timer_event_stop_mmode(void);
+
 /** Process timer event for current HART */
 void sbi_timer_process(void);
 

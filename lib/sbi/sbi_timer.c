@@ -147,6 +147,26 @@ void sbi_timer_event_start(u64 next_event)
 	csr_set(CSR_MIE, MIP_MTIP);
 }
 
+void sbi_timer_event_start_mmode(u64 next_event)
+{
+	sbi_pmu_ctr_incr_fw(SBI_PMU_FW_SET_TIMER);
+
+	if (timer_dev && timer_dev->timer_event_start) {
+		timer_dev->timer_event_start(next_event);
+		csr_clear(CSR_MIP, MIP_MTIP);
+	}
+	csr_set(CSR_MIE, MIP_MTIP);
+}
+
+void sbi_timer_event_stop_mmode(void)
+{
+	if (timer_dev && timer_dev->timer_event_stop)
+		timer_dev->timer_event_stop();
+
+	csr_clear(CSR_MIP, MIP_MTIP);
+	csr_clear(CSR_MIE, MIP_MTIP);
+}
+
 void sbi_timer_process(void)
 {
 	csr_clear(CSR_MIE, MIP_MTIP);
