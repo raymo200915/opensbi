@@ -24,6 +24,10 @@
 #include <qemu_virt_wg.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 
+#ifdef CONFIG_SBIUNIT
+#include <sbi/sbi_hwiso_test.h>
+#endif
+
 struct wg_checker {
 	char name[32];
 	u64 mmio_base;
@@ -1045,5 +1049,61 @@ int qemu_virt_hwiso_register(void *fdt)
 	if (rc)
 		return rc;
 
+#ifdef CONFIG_SBIUNIT
+	rc = sbi_hwiso_test_register(&wg_ops, &qemu_virt_wgchecker_test_ops);
+	if (rc && rc != SBI_EALREADY)
+		return rc;
+#endif
+
 	return 0;
 }
+
+#ifdef CONFIG_SBIUNIT
+static struct wg_domain_ctx *wg_test_find_domain_ctx(const struct sbi_domain *dom)
+{
+	u32 i;
+
+	if (!dom || !dom->hwiso_ctxs)
+		return NULL;
+
+	for (i = 0; i < dom->hwiso_ctx_count; i++) {
+		if (dom->hwiso_ctxs[i].ops != &wg_ops)
+			continue;
+
+		return dom->hwiso_ctxs[i].ctx;
+	}
+
+	return NULL;
+}
+
+int qemu_virt_wgchecker_test_check_platform_state(u32 checker_count,
+						  bool runtime_enabled)
+{
+	if (!wg_platform)
+		return SBI_ENOENT;
+	if (wg_platform->checker_count != checker_count)
+		return SBI_EINVAL;
+	if (wg_platform->runtime_enabled != runtime_enabled)
+		return SBI_EINVAL;
+	if (!!wg_platform->checker_count != wg_platform->checker_enabled)
+		return SBI_EINVAL;
+
+	return 0;
+}
+
+int qemu_virt_wgchecker_test_check_domain_state(const struct sbi_domain *dom,
+						bool expect_ctx,
+						u32 wid, u32 widlist_mask)
+{
+	struct wg_domain_ctx *ctx = wg_test_find_domain_ctx(dom);
+
+	if (!expect_ctx)
+		return ctx ? SBI_EINVAL : 0;
+	if (!ctx || !ctx->has_wid)
+		return SBI_ENOENT;
+	if (ctx->wid != wid || ctx->widlist_mask != widlist_mask)
+		return SBI_EINVAL;
+
+	return 0;
+}
+#endif

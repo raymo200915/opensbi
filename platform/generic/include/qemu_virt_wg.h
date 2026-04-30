@@ -9,7 +9,12 @@
 #ifndef __QEMU_VIRT_WG_H__
 #define __QEMU_VIRT_WG_H__
 
+#include <sbi/sbi_domain.h>
 #include <sbi/sbi_types.h>
+
+#ifdef CONFIG_SBIUNIT
+#include <sbi/sbi_hwiso_test.h>
+#endif
 
 /*
  * QEMU virt WorldGuard model definitions
@@ -56,5 +61,15 @@ struct qemu_virt_wg_range {
 	u64 size;
 	u64 perm;
 };
+
+#ifdef CONFIG_SBIUNIT
+extern const struct sbi_hwiso_test_ops qemu_virt_wgchecker_test_ops;
+
+int qemu_virt_wgchecker_test_check_platform_state(u32 checker_count,
+						  bool runtime_enabled);
+int qemu_virt_wgchecker_test_check_domain_state(const struct sbi_domain *dom,
+						bool expect_ctx, u32 wid,
+						u32 widlist_mask);
+#endif
 
 #endif
