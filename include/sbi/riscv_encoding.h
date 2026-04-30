@@ -373,6 +373,7 @@
 
 /* Supervisor Protection and Translation */
 #define CSR_SATP			0x180
+#define CSR_SLWID			0x190
 
 /* Supervisor Indirect Register Alias */
 #define CSR_SISELECT			0x150
@@ -510,6 +511,7 @@
 /* Machine Configuration */
 #define CSR_MENVCFG			0x30a
 #define CSR_MENVCFGH			0x31a
+#define CSR_MLWID			0x390
 
 /* Machine Trap Handling */
 #define CSR_MSCRATCH			0x340
@@ -736,6 +738,7 @@
 /* Machine Security Configuration CSR (mseccfg) */
 #define CSR_MSECCFG			0x747
 #define CSR_MSECCFGH			0x757
+#define CSR_MWIDDELEG			0x748
 
 #define MSECCFG_MML_SHIFT		(0)
 #define MSECCFG_MML			(_UL(1) << MSECCFG_MML_SHIFT)
