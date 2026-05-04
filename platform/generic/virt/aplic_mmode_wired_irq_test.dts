@@ -1,0 +1,28 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+	fragment@0 {
+		target-path = "/soc/interrupt-controller@c000000";
+		__overlay__ {
+			/*
+			 * Stock QEMU virt,aia=aplic delegates all wired IRQs from
+			 * the M-mode APLIC to its child S-mode APLIC:
+			 *
+			 *   <child-phandle 1 96>
+			 *
+			 * Keep hwirq 10 local to the M-mode APLIC by delegating
+			 * only 1..9 and 11..96 to the child APLIC. This matches
+			 * the local OpenSBI APLIC_QEMU_WIRED_TEST path, which
+			 * exercises wired IRQ delivery via hwirq 10 (UART RX).
+			 *
+			 * This overlay is intended to be applied on top of a base
+			 * DTB dumped from the same QEMU virt,aia=aplic command
+			 * line. The child phandle value below therefore matches
+			 * that dumped base DTB.
+			 */
+			riscv,delegate = <0x04 0x01 0x09 0x04 0x0b 0x60>;
+			riscv,delegation = <0x04 0x01 0x09 0x04 0x0b 0x60>;
+		};
+	};
+};
