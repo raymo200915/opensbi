@@ -9,6 +9,7 @@
  */
 
 #include <libfdt.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_hwiso.h>
@@ -65,12 +66,45 @@ int sbi_hwiso_init(void *fdt)
 		if (!entry->ops->init)
 			continue;
 
+		sbi_printf("[HWISO] init %s\n", entry->ops->name);
 		rc = entry->ops->init(fdt);
-		if (rc)
+		if (rc) {
+			sbi_printf("[HWISO] %s init failed (error %d)\n",
+				   entry->ops->name, rc);
 			return rc;
+		}
 	}
 
 	return 0;
+}
+
+static void hwiso_warn_unknown_nodes(void *fdt, int domain_offset)
+{
+	int hoff, child;
+	struct sbi_hwiso_node *entry;
+	bool known;
+
+	if (!fdt || (domain_offset < 0))
+		return;
+
+	hoff = fdt_subnode_offset(fdt, domain_offset, "hw-isolation");
+	if (hoff < 0)
+		return;
+
+	fdt_for_each_subnode(child, fdt, hoff) {
+		known = false;
+		sbi_list_for_each_entry(entry, &hwiso_ops_list, node) {
+			if (!fdt_node_check_compatible(
+					fdt, child, entry->ops->name)) {
+				known = true;
+				break;
+			}
+		}
+
+		if (!known)
+			sbi_printf("[HWISO] unknown mechanism at %s\n",
+				   fdt_get_name(fdt, child, NULL));
+	}
 }
 
 int sbi_hwiso_domain_init(void *fdt, int domain_offset,
@@ -85,8 +119,10 @@ int sbi_hwiso_domain_init(void *fdt, int domain_offset,
 	if (!dom)
 		return 0;
 
-	if (!hwiso_ops_count)
+	if (!hwiso_ops_count) {
+		hwiso_warn_unknown_nodes(fdt, domain_offset);
 		return 0;
+	}
 
 	ctxs = sbi_calloc(sizeof(*ctxs), hwiso_ops_count);
 	if (!ctxs)
@@ -101,10 +137,16 @@ int sbi_hwiso_domain_init(void *fdt, int domain_offset,
 		ctx = NULL;
 
 		if (entry->ops->domain_init) {
+			sbi_printf("[HWISO] ops: %s, init domain: %s\n",
+				   entry->ops->name,
+				   dom ? dom->name : "<null>");
 			rc = entry->ops->domain_init(fdt, domain_offset,
 						     dom, &ctx);
 			ctxs[idx].ctx = ctx;
 			if (rc) {
+				sbi_printf("[HWISO] domain init ops %s failed"
+					   " err=%d\n",
+					   entry->ops->name, rc);
 				sbi_hwiso_domain_cleanup(dom);
 				return rc;
 			}
@@ -113,6 +155,8 @@ int sbi_hwiso_domain_init(void *fdt, int domain_offset,
 		ctxs[idx].ctx = ctx;
 		idx++;
 	}
+
+	hwiso_warn_unknown_nodes(fdt, domain_offset);
 
 	return 0;
 }
@@ -130,6 +174,10 @@ void sbi_hwiso_domain_exit(const struct sbi_domain *src,
 		    !src->hwiso_ctxs[i].ops->domain_exit)
 			continue;
 
+		sbi_printf("[HWISO] ops: %s, domain exit src=%s dst=%s\n",
+			   src->hwiso_ctxs[i].ops->name,
+			   src ? src->name : "<null>",
+			   dst ? dst->name : "<null>");
 		src->hwiso_ctxs[i].ops->domain_exit(
 					src, dst, src->hwiso_ctxs[i].ctx);
 	}
@@ -148,6 +196,10 @@ void sbi_hwiso_domain_enter(const struct sbi_domain *dst,
 		    !dst->hwiso_ctxs[i].ops->domain_enter)
 			continue;
 
+		sbi_printf("[HWISO] ops: %s, domain enter dst=%s src=%s\n",
+			   dst->hwiso_ctxs[i].ops->name,
+			   dst ? dst->name : "<null>",
+			   src ? src->name : "<null>");
 		dst->hwiso_ctxs[i].ops->domain_enter(
 					dst, src, dst->hwiso_ctxs[i].ctx);
 	}
@@ -165,6 +217,9 @@ void sbi_hwiso_domain_cleanup(struct sbi_domain *dom)
 		    !dom->hwiso_ctxs[i].ops->domain_cleanup)
 			continue;
 
+		sbi_printf("[HWISO] ops: %s, domain %s cleanup\n",
+			   dom->hwiso_ctxs[i].ops->name,
+			   dom ? dom->name : "<null>");
 		dom->hwiso_ctxs[i].ops->domain_cleanup(
 					dom, dom->hwiso_ctxs[i].ctx);
 	}
