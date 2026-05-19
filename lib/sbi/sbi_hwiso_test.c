@@ -97,6 +97,11 @@ static void hwiso_boot_test(struct sbiunit_test_case *test)
 	sbi_hwiso_test_boot(test);
 }
 
+static void hwiso_failure_mode_test(struct sbiunit_test_case *test)
+{
+	sbi_hwiso_test_failure(test);
+}
+
 static void hwiso_domain_switch_test(struct sbiunit_test_case *test)
 {
 	struct sbi_domain *cur_dom = sbi_domain_thishart_ptr();
@@ -161,6 +166,7 @@ out:
 
 static struct sbiunit_test_case hwiso_test_cases[] = {
 	SBIUNIT_TEST_CASE(hwiso_boot_test),
+	SBIUNIT_TEST_CASE(hwiso_failure_mode_test),
 	SBIUNIT_TEST_CASE(hwiso_domain_switch_test),
 	SBIUNIT_END_CASE,
 };

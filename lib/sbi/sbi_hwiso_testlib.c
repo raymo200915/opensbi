@@ -65,6 +65,17 @@ void sbi_hwiso_test_boot(struct sbiunit_test_case *test)
 	}
 }
 
+void sbi_hwiso_test_failure(struct sbiunit_test_case *test)
+{
+	struct sbi_hwiso_test_node *entry;
+
+	sbi_list_for_each_entry(entry, &hwiso_test_ops_list, node) {
+		if (!entry->test_ops->failure_test)
+			continue;
+		entry->test_ops->failure_test(test);
+	}
+}
+
 void sbi_hwiso_test_domain_state(struct sbiunit_test_case *test,
 				 const struct sbi_domain *dom)
 {

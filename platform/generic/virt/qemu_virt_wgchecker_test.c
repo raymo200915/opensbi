@@ -8,14 +8,17 @@
 #include <libfdt.h>
 #include <sbi/riscv_encoding.h>
 #include <sbi/riscv_io.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_hart.h>
 #include <sbi/sbi_hwiso.h>
 #include <sbi/sbi_hwiso_test.h>
 #include <sbi/sbi_scratch.h>
+#include <sbi/sbi_trap.h>
 #include <sbi/sbi_string.h>
 #include <sbi/sbi_unit_test.h>
+#include <sbi/sbi_unpriv.h>
 #include <sbi_utils/fdt/fdt_helper.h>
 #include <wgchecker2.h>
 #include <worldguard.h>
@@ -40,6 +43,8 @@ struct qemu_virt_wg_expect {
 	bool check_slwid;
 	u32 slwid;
 };
+
+#define QEMU_VIRT_WG_DENIED_STORE_ADDR		0xc0001000UL
 
 static u64 qemu_virt_wg_mmio_read64(unsigned long addr)
 {
@@ -295,8 +300,38 @@ static void qemu_virt_wg_boot_test(struct sbiunit_test_case *test)
 			  0);
 }
 
+static void qemu_virt_wg_failure_test(struct sbiunit_test_case *test)
+{
+	struct sbi_domain *cur_dom = sbi_domain_thishart_ptr();
+	struct sbi_domain *dom0 = qemu_virt_wg_find_domain("domain@0");
+	struct sbi_trap_info trap = { 0 };
+
+	SBIUNIT_ASSERT_NE(test, cur_dom, NULL);
+	SBIUNIT_ASSERT_NE(test, dom0, NULL);
+
+	if (cur_dom != dom0) {
+		sbi_hwiso_domain_exit(cur_dom, dom0);
+		sbi_hwiso_domain_enter(dom0, cur_dom);
+	}
+
+	sbi_store_u32((u32 *)QEMU_VIRT_WG_DENIED_STORE_ADDR, 0x5a5aa5a5U,
+		      &trap);
+
+	if (cur_dom != dom0) {
+		sbi_hwiso_domain_exit(dom0, cur_dom);
+		sbi_hwiso_domain_enter(cur_dom, dom0);
+	}
+
+	sbi_printf("[WG TEST] failure trap cause=0x%lx tval=0x%lx\n",
+		   trap.cause, trap.tval);
+
+	SBIUNIT_ASSERT_EQ(test, trap.cause, CAUSE_STORE_ACCESS);
+	SBIUNIT_ASSERT_EQ(test, trap.tval, QEMU_VIRT_WG_DENIED_STORE_ADDR);
+}
+
 const struct sbi_hwiso_test_ops qemu_virt_worldguard_test_ops = {
 	.boot_test = qemu_virt_wg_boot_test,
+	.failure_test = qemu_virt_wg_failure_test,
 	.domain_state_test = qemu_virt_wg_assert_state,
 	.domain_quiesce_test = qemu_virt_wg_assert_quiesced,
 };
