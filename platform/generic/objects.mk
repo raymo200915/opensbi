@@ -23,6 +23,7 @@ platform-objs-y += platform_override_modules.carray.o
 platform-objs-y += worldguard.o
 platform-objs-y += wgchecker2.o
 platform-objs-y += virt/qemu_virt_worldguard.o
+platform-objs-$(CONFIG_SBIUNIT) += virt/qemu_virt_wgchecker_test.o
 
 # Blobs to build
 FW_DYNAMIC=y
