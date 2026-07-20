@@ -9,6 +9,7 @@
 
 #include <libfdt.h>
 #include <sbi/riscv_io.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_string.h>
@@ -468,12 +469,16 @@ int wgchecker2_init(void *fdt)
 		rc = wgchecker2_parse_checker(fdt, checker_node,
 					      &platform->checkers[idx]);
 		if (rc) {
+			sbi_printf("[WG] failed to parse checker %s err=%d\n",
+				   fdt_get_name(fdt, checker_node, NULL), rc);
 			wgchecker2_free_platform_ctx(platform);
 			return rc;
 		}
 
 		rc = wgchecker2_program_checker(&platform->checkers[idx]);
 		if (rc) {
+			sbi_printf("[WG] failed to program checker %s err=%d\n",
+				   platform->checkers[idx].name, rc);
 			wgchecker2_free_platform_ctx(platform);
 			return rc;
 		}
