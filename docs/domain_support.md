@@ -204,6 +204,167 @@ The DT properties of a domain instance DT node are as follows:
   whether the domain instance is allowed to do system reset.
 * **system-suspend-allowed** (Optional) - A boolean flag representing
   whether the domain instance is allowed to do system suspend.
+* **hw-isolation** (Optional) - A child node acting as a container for
+  system-level hardware isolation mechanisms. Each child node represents a
+  single mechanism configured via its compatible string and properties.
+
+Hardware Isolation Hooks
+------------------------
+
+OpenSBI provides a system-level hardware isolation framework that dispatches
+all registered mechanisms in the following phases:
+
+* **init** - Runs at boot to configure system-level isolation features.
+* **domain_init** - Parses per-domain isolation configuration.
+* **domain_exit** - Runs before switching out of a domain.
+* **domain_enter** - Runs after switching into a domain.
+
+Hardware Isolation Device Tree Binding
+--------------------------------------
+
+The hardware isolation configuration is specified as an optional child node
+named **hw-isolation** under a domain instance node. The **hw-isolation**
+node is a container for one or more mechanism nodes.
+
+The DT properties of a hardware isolation container node are as follows:
+
+* **#address-cells** / **#size-cells** (Optional) - Standard container node
+  properties. They are not interpreted by OpenSBI.
+
+Each hardware isolation mechanism has its own properties and compatible
+string. A mechanism can either use per-domain properties below the domain
+instance node, or parse system-level DT nodes describing isolation hardware.
+
+For the WorldGuard support on QEMU virt, OpenSBI parses the
+following WG-style system nodes:
+
+* **sifive,wgchecker2** - WorldGuard checker node.
+* **reg** - Checker MMIO base/size.
+* **sifive,slot-count** - Number of hardware checker slots.
+* **sifive,subordinates** - List of protected resource phandles owned by the
+  checker.
+* **worldguard_cfg** - Child node of a protected memory or device node
+  describing WorldGuard policy for that resource.
+* **perms** - 64-bit permission bitmap values encoded as **<hi lo>** cell
+  pairs, with either one value for the whole resource or one value per
+  protected range.
+* **reg** - Optional protected address ranges inside a **worldguard_cfg**
+  child. If omitted, the resource node's own **reg** is used. A single
+  subordinate with one **perms** entry and no explicit **worldguard_cfg/reg**
+  is treated as a full-checker rule.
+* **worldguard** - Optional CPU child node compatible with **riscv,wgcpu**
+  providing default WG execution state.
+* **mwid** - Default machine world ID for a hart.
+* **mwidlist** - Valid/delegable world IDs for that hart.
+
+Domain nodes can optionally provide WG execution metadata under the
+**hw-isolation** container:
+
+* **worldguard,wid** - Machine world ID selected when entering the domain.
+* **worldguard,widlist** - World IDs delegated to the domain.
+
+At runtime the WorldGuard implementation uses the existing generic
+infrastructure as follows:
+
+* Platform setup parses all WG checker nodes, validates the protected
+  ranges, and programs checker MMIO slots at boot when platform checker
+  nodes are present. Runtime WID/WID list support is enabled only when
+  per-CPU WG runtime nodes are present; checker-only DTs do not force
+  runtime switching on.
+* **sbi_domain_data** owned by the WG mechanism parses per-domain
+  **worldguard,wid** and **worldguard,widlist** metadata.
+* The WG **sbi_hart_protection** mechanism quiesces the current hart back to
+  its per-hart default machine WID and clears **MWIDDELEG** before the
+  handoff.
+* The WG **sbi_hart_protection** mechanism reprograms **MLWID**,
+  **MWIDDELEG**, and, when delegation is active, **SLWID** for the
+  destination domain when the hart supports **smwg** / **sswg**.
+
+The CPU **worldguard** defaults are parsed per hart from **/cpus/<cpu>**, so
+platforms may provide different default **mwid** / **mwidlist** values on
+different harts.
+
+Hardware Isolation Examples
+---------------------------
+
+Domain instance with WG execution metadata:
+
+```text
+    chosen {
+        opensbi-domains {
+            compatible = "opensbi,domain,config";
+
+            example_domain: domain@1 {
+                compatible = "opensbi,domain,instance";
+                possible-harts = <&cpu2>;
+                regions = <&mem0 0x3f>;
+                boot-hart = <&cpu2>;
+                next-addr = <0x00000000 0x80200000>;
+                next-mode = <0x1>;
+
+                hw-isolation {
+                    worldguard {
+                        compatible = "sifive,wgchecker2";
+                        worldguard,wid = <1>;
+                        worldguard,widlist = <1 3>;
+                    };
+                };
+            };
+        };
+    };
+```
+
+WG checker, CPU default state, and protected resource example. These nodes
+remain in the normal system DT topology because they describe isolation
+hardware and protected resources, not OpenSBI domain instances:
+
+```text
+    cpu0: cpu@0 {
+        worldguard {
+            compatible = "riscv,wgcpu";
+            mwid = <0>;
+            mwidlist = <0 1 3>;
+        };
+    };
+
+    flash0: flash@20000000 {
+        reg = <0x0 0x20000000 0x0 0x2000000>;
+        worldguard_cfg {
+            perms = <0x0 0xc3>;
+        };
+    };
+
+    uart0: serial@10000000 {
+        reg = <0x0 0x10000000 0x0 0x100>;
+        worldguard_cfg {
+            perms = <0x0 0xc0>;
+        };
+    };
+
+    memory0: memory@80000000 {
+        reg = <0x0 0x80000000 0x0 0x80000000>;
+        worldguard_cfg {
+            reg = <0x0 0x80000000 0x0 0x40000000
+                   0x0 0xc0000000 0x0 0x01000000
+                   0x0 0xc1000000 0x0 0x3f000000>;
+            perms = <0x0 0xcf 0x0 0xcc 0x0 0xcf>;
+        };
+    };
+
+    wgchecker0: wgchecker@10100000 {
+        compatible = "sifive,wgchecker2";
+        reg = <0x0 0x10100000 0x0 0x1000>;
+        sifive,slot-count = <8>;
+        sifive,subordinates = <&memory0 &flash0 &uart0>;
+    };
+```
+
+The test overlay used in this tree is at:
+
+* **platform/generic/virt/qemu-virt-wg-overlay.dts**
+
+That overlay only adds per-domain and per-resource metadata. The base DTB
+must still provide the WG checker nodes and per-CPU **worldguard** nodes.
 
 ### Assigning HART To Domain Instance
 
