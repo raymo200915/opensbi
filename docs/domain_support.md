@@ -204,6 +204,218 @@ The DT properties of a domain instance DT node are as follows:
   whether the domain instance is allowed to do system reset.
 * **system-suspend-allowed** (Optional) - A boolean flag representing
   whether the domain instance is allowed to do system suspend.
+* **hw-isolation** (Optional) - A child node used by platform-specific
+  isolation mechanisms. The current OpenSBI WorldGuard implementation uses
+  this node only as a container for per-domain WorldGuard execution metadata.
+
+WorldGuard Device Tree Binding
+------------------------------
+
+The current OpenSBI WorldGuard support is built from:
+
+* **sbi_hart_protection** for hart-local runtime reconfiguration during
+  domain transitions
+* **sbi_domain_data** for per-domain WorldGuard state
+* platform-specific setup code that parses and programs WorldGuard checkers
+  before domains are populated
+
+The WorldGuard-specific DT state is split across two places:
+
+* under a domain instance node, for per-domain execution metadata
+* in the normal system DT topology, for CPU defaults and checker policy
+
+### Domain-local WorldGuard Metadata
+
+The optional **hw-isolation** child node under a domain instance may contain
+one WorldGuard child node:
+
+* **compatible = "sifive,wgchecker2"**
+* **worldguard,wid** - Machine world ID selected when entering the domain
+* **worldguard,widlist** - List of world IDs delegated to the domain
+
+The current implementation looks up the domain node in the FDT, finds its
+**hw-isolation** child, and parses the first child node compatible with
+**sifive,wgchecker2**.
+
+### System-level WorldGuard Metadata
+
+The current implementation also parses the following system-level DT state:
+
+* **/cpus/cpu@X**
+  * **riscv,pmwid** - Default machine world ID for the hart
+  * **riscv,pmwidlist** - Optional M-mode WID bitmap for the hart
+  * **riscv,pmlwidlist** - Optional delegated lower-privilege WID bitmap
+* **sifive,wgchecker2** nodes
+  * **reg** - Checker MMIO base/size
+  * **#address-cells = <1>**
+  * **#size-cells = <0>**
+  * **#access-controller-cells = <1>**
+  * **partition@N** child nodes with:
+    * **reg** - Partition identifier
+    * **sifive,wg-region** - Protected base/size pair
+    * **sifive,slot-permissions** - 64-bit WID permission bitmap
+    * **sifive,slot-config** - DT-visible **ER/EW/IR/IW/LOCK** policy bits
+* protected resource nodes with **access-controllers** properties that point
+  to a checker and reference one or more partition IDs
+
+For the current implementation, checker policy is parsed from **partition@N**
+children under each checker node. Consumer-side **access-controllers**
+references are carried for DT-binding alignment, but the OpenSBI platform code
+programs the checker from provider-local partition metadata.
+OpenSBI validates that each checker has exactly one cell for each required
+provider property and that their values are **#address-cells = <1>**,
+**#size-cells = <0>**, and **#access-controller-cells = <1>**.
+
+### Runtime Behavior
+
+At boot:
+
+* platform setup detects whether checker programming and/or runtime WID
+  switching are present in the DT
+* if runtime WID support is present, OpenSBI registers a WorldGuard
+  **sbi_hart_protection** mechanism and a **sbi_domain_data** provider
+* per-hart default WID state is parsed from **/cpus**
+* checker instances are parsed, validated, and programmed before domain
+  population completes
+
+During a domain transition:
+
+* the WorldGuard **sbi_domain_data** provider supplies per-domain
+  **worldguard,wid** and **worldguard,widlist** state
+* the WorldGuard **sbi_hart_protection** implementation reprograms
+  **MLWID**
+* when **smlwidlist** is present, it also reprograms **MLWIDLIST**
+* when **smwiddeleg** and **sswid** are present, it also reprograms
+  **MWIDDELEG** and **SLWID**
+* when a domain is quiesced, the hart is returned to its per-hart fallback
+  machine world state
+
+**MLWIDLIST** is restored from the hart's **riscv,pmwidlist** value. Domain
+**worldguard,widlist** metadata controls lower-privilege delegation through
+**MWIDDELEG** and is constrained by **riscv,pmlwidlist**.
+
+Runtime WID switching is enabled only when the CPU runtime properties are
+present. A DT that only describes checker hardware does not, by itself,
+enable hart-local WorldGuard reconfiguration.
+
+WorldGuard Examples
+-------------------
+
+Domain instance with WorldGuard execution metadata:
+
+```text
+    chosen {
+        opensbi-domains {
+            compatible = "opensbi,domain,config";
+
+            example_domain: domain@1 {
+                compatible = "opensbi,domain,instance";
+                possible-harts = <&cpu2>;
+                regions = <&mem0 0x3f>;
+                boot-hart = <&cpu2>;
+                next-addr = <0x00000000 0x80200000>;
+                next-mode = <0x1>;
+
+                hw-isolation {
+                    worldguard {
+                        compatible = "sifive,wgchecker2";
+                        worldguard,wid = <0x1>;
+                        worldguard,widlist = <1 3>;
+                    };
+                };
+            };
+        };
+    };
+```
+
+CPU default state, checker, and protected resource example:
+
+```text
+    memory0: memory@80000000 {
+        reg = <0x0 0x80000000 0x0 0x80000000>;
+        access-controllers = <&wgchecker0 0>, <&wgchecker0 1>, <&wgchecker0 2>;
+    };
+
+    flash0: flash@20000000 {
+        reg = <0x0 0x20000000 0x0 0x04000000>;
+        access-controllers = <&wgchecker1 0>;
+    };
+
+    uart0: serial@10000000 {
+        reg = <0x0 0x10000000 0x0 0x00001000>;
+        access-controllers = <&wgchecker2 0>;
+    };
+
+    wgchecker0: wgchecker@6000000 {
+        compatible = "qemu,wgchecker2", "sifive,wgchecker2";
+        reg = <0x0 0x06000000 0x0 0x1000>;
+        #access-controller-cells = <1>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        phandle = <0x100>;
+
+        partition@0 {
+            reg = <0>;
+            sifive,wg-region = <0x0 0x80000000 0x0 0x40000000>;
+            sifive,slot-permissions = <0x0 0x000000cf>;
+            sifive,slot-config = <0x0f>;
+        };
+
+        partition@1 {
+            reg = <1>;
+            sifive,wg-region = <0x0 0xc0000000 0x0 0x01000000>;
+            sifive,slot-permissions = <0x0 0x000000cc>;
+            sifive,slot-config = <0x0f>;
+        };
+
+        partition@2 {
+            reg = <2>;
+            sifive,wg-region = <0x0 0xc1000000 0x0 0x3f000000>;
+            sifive,slot-permissions = <0x0 0x000000cf>;
+            sifive,slot-config = <0x0f>;
+        };
+    };
+
+    wgchecker1: wgchecker@6001000 {
+        compatible = "qemu,wgchecker2", "sifive,wgchecker2";
+        reg = <0x0 0x06001000 0x0 0x1000>;
+        #access-controller-cells = <1>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        phandle = <0x101>;
+
+        partition@0 {
+            reg = <0>;
+            sifive,wg-region = <0x0 0x20000000 0x0 0x04000000>;
+            sifive,slot-permissions = <0x0 0x000000c3>;
+            sifive,slot-config = <0x0f>;
+        };
+    };
+
+    wgchecker2: wgchecker@6002000 {
+        compatible = "qemu,wgchecker2", "sifive,wgchecker2";
+        reg = <0x0 0x06002000 0x0 0x1000>;
+        #access-controller-cells = <1>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        phandle = <0x102>;
+
+        partition@0 {
+            reg = <0>;
+            sifive,wg-region = <0x0 0x10000000 0x0 0x00001000>;
+            sifive,slot-permissions = <0x0 0x000000c0>;
+            sifive,slot-config = <0x0f>;
+        };
+    };
+```
+
+The test overlay used in this tree is at:
+
+* **platform/generic/virt/qemu-virt-wg-overlay.dts**
+
+That overlay supplies the current QEMU virt test metadata for OpenSBI
+domains and protected resources. The base DTB must still provide the checker
+nodes and the CPU-level WorldGuard properties consumed by the runtime code.
 
 ### Assigning HART To Domain Instance
 
