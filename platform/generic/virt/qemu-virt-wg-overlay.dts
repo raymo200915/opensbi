@@ -1,0 +1,121 @@
+// SPDX-License-Identifier: BSD-2-Clause
+/dts-v1/;
+/plugin/;
+
+/*
+ * Test-only overlay for exercising WorldGuard domain metadata.
+ *
+ * This overlay only adds OpenSBI domain metadata and worldguard_cfg resource
+ * policy. The base DTB is expected to already provide the WG checker nodes
+ * and per-CPU worldguard child nodes.
+ *
+ * Usage:
+ * Domain hart phandles are filled in after merge because fdtoverlay does not
+ * reliably resolve CPU-node references against QEMU dumpdtb output here.
+ * See below steps for filling the domain hart phandles (assume the dumped dtb
+ * and merged dtb are represented by 'qemu.dtb' and 'qemu-merged.dtb'
+ * respectively):
+ *   cpu0_phandle=$(fdtget -t x qemu.dtb /cpus/cpu@0 phandle)
+ *   cpu1_phandle=$(fdtget -t x qemu.dtb /cpus/cpu@1 phandle)
+ *   fdtput -t x qemu-merged.dtb /chosen/opensbi-domains/domain@0 \
+ *     possible-harts "$cpu0_phandle" "$cpu1_phandle"
+ *   fdtput -t x qemu-merged.dtb /chosen/opensbi-domains/domain@0 \
+ *     boot-hart "$cpu0_phandle"
+ *   fdtput -t x qemu-merged.dtb /chosen/opensbi-domains/domain@1 \
+ *     possible-harts "$cpu1_phandle"
+ *   fdtput -t x qemu-merged.dtb /chosen/opensbi-domains/domain@1 \
+ *     boot-hart "$cpu1_phandle"
+ */
+/ {
+	fragment@0 {
+		target-path = "/chosen";
+		__overlay__ {
+			opensbi-domains {
+				compatible = "opensbi,domain,config";
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				memregion0: memregion@0 {
+					compatible = "opensbi,domain,memregion";
+					base = <0x00000000 0x80000000>;
+					order = <0x1f>;
+				};
+
+				guest0: domain@0 {
+					compatible = "opensbi,domain,instance";
+					regions = <&memregion0 0x3f>;
+					next-addr = <0x00000000 0x80200000>;
+					next-arg1 = <0x00000000 0x82200000>;
+					next-mode = <0x1>;
+
+					hw-isolation {
+						worldguard {
+							compatible = "sifive,wgchecker2";
+							worldguard,wid = <0>;
+							worldguard,widlist = <0 1 3>;
+						};
+					};
+				};
+
+				guest1: domain@1 {
+					compatible = "opensbi,domain,instance";
+					regions = <&memregion0 0x3f>;
+					next-addr = <0x00000000 0x80200000>;
+					next-mode = <0x1>;
+
+					hw-isolation {
+						worldguard {
+							compatible = "sifive,wgchecker2";
+							worldguard,wid = <1>;
+							worldguard,widlist = <1 3>;
+						};
+					};
+				};
+			};
+		};
+	};
+
+	fragment@1 {
+		target-path = "/cpus/cpu@0";
+		__overlay__ {
+			opensbi-domain = <&guest0>;
+		};
+	};
+
+	fragment@2 {
+		target-path = "/cpus/cpu@1";
+		__overlay__ {
+			opensbi-domain = <&guest0>;
+		};
+	};
+
+	fragment@3 {
+		target-path = "/memory@80000000";
+		__overlay__ {
+			worldguard_cfg {
+				reg = <0x00000000 0x80000000 0x00000000 0x40000000
+				       0x00000000 0xc0000000 0x00000000 0x01000000
+				       0x00000000 0xc1000000 0x00000000 0x3f000000>;
+				perms = <0x0 0xcf 0x0 0xcc 0x0 0xcf>;
+			};
+		};
+	};
+
+	fragment@4 {
+		target-path = "/flash@20000000";
+		__overlay__ {
+			worldguard_cfg {
+				perms = <0x0 0xc3>;
+			};
+		};
+	};
+
+	fragment@5 {
+		target-path = "/soc/serial@10000000";
+		__overlay__ {
+			worldguard_cfg {
+				perms = <0x0 0xc0>;
+			};
+		};
+	};
+};
