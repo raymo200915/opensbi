@@ -11,6 +11,8 @@
 #include <platform_override.h>
 #include <sbi/riscv_asm.h>
 #include <sbi/sbi_bitops.h>
+#include <sbi/sbi_console.h>
+#include <sbi/sbi_error.h>
 #include <sbi/sbi_hartmask.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_platform.h>
@@ -29,6 +31,7 @@
 #include <sbi_utils/serial/fdt_serial.h>
 #include <sbi_utils/serial/semihosting.h>
 #include <sbi_utils/timer/fdt_timer.h>
+#include <qemu_virt_worldguard.h>
 
 /* List of platform override modules generated at compile time */
 extern const struct fdt_driver *const platform_override_modules[];
@@ -267,9 +270,19 @@ int generic_domains_init(void)
 	const void *fdt = fdt_get_address();
 	int offset, ret;
 
-	ret = fdt_domains_populate(fdt);
-	if (ret < 0)
+	ret = qemu_virt_worldguard_setup(fdt);
+	if (ret < 0) {
+		sbi_printf("%s: qemu_virt_worldguard_setup failed (error %d)\n",
+			   __func__, ret);
 		return ret;
+	}
+
+	ret = fdt_domains_populate(fdt);
+	if (ret < 0) {
+		sbi_printf("%s: fdt_domains_populate failed (error %d)\n",
+			   __func__, ret);
+		return ret;
+	}
 
 	offset = fdt_path_offset(fdt, "/chosen");
 
