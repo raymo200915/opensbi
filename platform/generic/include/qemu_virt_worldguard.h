@@ -10,4 +10,10 @@
 
 int qemu_virt_worldguard_setup(const void *fdt);
 
+#ifdef CONFIG_SBIUNIT
+#include <sbi/sbi_hart_protection_test.h>
+
+extern const struct sbi_hart_protection_test_ops qemu_virt_worldguard_test_ops;
+#endif
+
 #endif
