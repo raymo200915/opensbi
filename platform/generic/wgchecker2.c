@@ -9,6 +9,7 @@
 
 #include <libfdt.h>
 #include <sbi/riscv_io.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
 #include <sbi/sbi_string.h>
@@ -277,6 +278,9 @@ static int wgchecker2_parse_checker_rules(void *fdt, int checker_node,
 	for (i = 0; i < checker->subordinate_count; i++) {
 		child = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(subs[i]));
 		if (child < 0) {
+			sbi_printf("[WG] checker %s has invalid subordinate"
+				   " phandle[%d]=0x%x err=%d\n",
+				   checker->name, i, fdt32_to_cpu(subs[i]), child);
 			rc = child;
 			goto err;
 		}
@@ -554,15 +558,27 @@ int wgchecker2_init(void *fdt)
 		rc = wgchecker2_parse_checker(fdt, checker_node,
 					      &platform->checkers[idx]);
 		if (rc) {
+			sbi_printf("[WG] failed to parse checker %s err=%d\n",
+				   fdt_get_name(fdt, checker_node, NULL), rc);
 			wgchecker2_free_platform_ctx(platform);
 			return rc;
 		}
 
 		rc = wgchecker2_program_checker(&platform->checkers[idx]);
 		if (rc) {
+			sbi_printf("[WG] failed to program checker %s err=%d\n",
+				   platform->checkers[idx].name, rc);
 			wgchecker2_free_platform_ctx(platform);
 			return rc;
 		}
+
+		sbi_printf("[WG] checker %s base=0x%llx slots=%u rules=%u%s\n",
+			   platform->checkers[idx].name,
+			   (unsigned long long)platform->checkers[idx].mmio_base,
+			   platform->checkers[idx].slot_count,
+			   platform->checkers[idx].range_count,
+			   platform->checkers[idx].full_checker_rule ?
+				" full-checker" : "");
 		idx++;
 	}
 

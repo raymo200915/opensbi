@@ -9,6 +9,7 @@
 
 #include <libfdt.h>
 #include <sbi/riscv_encoding.h>
+#include <sbi/sbi_console.h>
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_domain_data.h>
 #include <sbi/sbi_error.h>
@@ -438,6 +439,9 @@ static int worldguard_hprot_configure(struct sbi_scratch *scratch,
 					state ? state->wid : 0, mlwid);
 	worldguard_program_wid_state(mlwid, mwiddeleg, slwid);
 
+	sbi_printf("[WG] configure dom=%s mlwid=%u mwiddeleg=0x%x slwid=%u\n",
+		   dom ? dom->name : "<null>", mlwid, mwiddeleg, slwid);
+
 	return 0;
 }
 
@@ -452,6 +456,9 @@ static void worldguard_hprot_unconfigure(struct sbi_scratch *scratch,
 
 	worldguard_program_wid_state(worldguard_fallback_wid(), 0,
 				     worldguard_fallback_wid());
+
+	sbi_printf("[WG] unconfigure dom=%s mlwid=%u mwiddeleg=0x0\n",
+		   dom ? dom->name : "<null>", worldguard_fallback_wid());
 }
 
 static struct sbi_hart_protection worldguard_hprot = {
