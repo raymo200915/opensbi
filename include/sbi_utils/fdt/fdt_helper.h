@@ -50,6 +50,13 @@ int fdt_parse_hart_id(const void *fdt, int cpu_offset, u32 *hartid);
 
 int fdt_parse_max_enabled_hart_id(const void *fdt, u32 *max_hartid);
 
+int fdt_parse_u32(const void *fdt, int nodeoff, const char *prop_name,
+		  u32 *out_val);
+
+int fdt_parse_u32_array_bitmask(const void *fdt, int nodeoff,
+				const char *prop_name, u32 max_bits,
+				u32 *out_mask);
+
 int fdt_parse_cbom_block_size(const void *fdt, int cpu_offset, unsigned long  *cbom_block_size);
 
 int fdt_parse_timebase_frequency(const void *fdt, unsigned long *freq);

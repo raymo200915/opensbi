@@ -97,6 +97,49 @@ int fdt_iterate_each_memregion(void *fdt, int domain_offset, void *opaque,
 	return 0;
 }
 
+static bool fdt_find_domain_offset_match(void *fdt, int domain_offset,
+					 void *opaque)
+{
+	struct fdt_find_domain_offset_info *info = opaque;
+	const char *name;
+
+	name = fdt_get_name(fdt, domain_offset, NULL);
+	if (name && !strcmp(info->name, name)) {
+		info->domain_offset = domain_offset;
+		return true;
+	}
+
+	return false;
+}
+
+static int fdt_find_domain_offset_iter(void *fdt, int domain_offset,
+				       void *opaque)
+{
+	return fdt_find_domain_offset_match(fdt, domain_offset, opaque) ? 1 : 0;
+}
+
+int fdt_find_domain_offset(const void *fdt, const struct sbi_domain *dom)
+{
+	struct fdt_find_domain_offset_info info;
+	int rc;
+
+	if (!fdt || !dom)
+		return SBI_EINVAL;
+	if (dom == &root)
+		return -1;
+
+	info.name = dom->name;
+	info.domain_offset = -1;
+	rc = fdt_iterate_each_domain((void *)fdt, &info,
+				     fdt_find_domain_offset_iter);
+	if (rc < 0)
+		return rc;
+	if (info.domain_offset >= 0)
+		return info.domain_offset;
+
+	return SBI_ENOENT;
+}
+
 static int fdt_iterate_each_memregion_ro(const void *fdt, int domain_offset, void *opaque,
 					 int (*fn)(const void *fdt, int domain_offset,
 						   int region_offset, u32 region_access,
@@ -114,8 +157,9 @@ struct __fixup_find_domain_offset_info {
 static int __fixup_find_domain_offset(void *fdt, int doff, void *p)
 {
 	struct __fixup_find_domain_offset_info *fdo = p;
+	const char *name = fdt_get_name(fdt, doff, NULL);
 
-	if (!strncmp(fdo->name, fdt_get_name(fdt, doff, NULL), strlen(fdo->name)))
+	if (name && !strcmp(fdo->name, name))
 		*fdo->doffset = doff;
 
 	return 0;

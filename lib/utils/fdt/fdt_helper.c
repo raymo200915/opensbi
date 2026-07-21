@@ -250,6 +250,63 @@ int fdt_parse_hart_id(const void *fdt, int cpu_offset, u32 *hartid)
 	return 0;
 }
 
+int fdt_parse_u32(const void *fdt, int nodeoff, const char *prop_name,
+		  u32 *out_val)
+{
+	const fdt32_t *prop;
+	int len;
+
+	if (!fdt || nodeoff < 0 || !prop_name || !out_val)
+		return SBI_EINVAL;
+
+	prop = fdt_getprop(fdt, nodeoff, prop_name, &len);
+	if (!prop)
+		return SBI_ENOENT;
+	if (len != (int)sizeof(fdt32_t))
+		return SBI_EINVAL;
+
+	*out_val = fdt32_to_cpu(prop[0]);
+	return 0;
+}
+
+int fdt_parse_u32_array_bitmask(const void *fdt, int nodeoff,
+				const char *prop_name, u32 max_bits,
+				u32 *out_mask)
+{
+	const fdt32_t *prop;
+	u32 mask = 0, count, val;
+	int len, i;
+
+	if (!fdt || nodeoff < 0 || !prop_name || !out_mask || !max_bits ||
+	    max_bits > 32)
+		return SBI_EINVAL;
+
+	*out_mask = 0;
+
+	prop = fdt_getprop(fdt, nodeoff, prop_name, &len);
+	if (!prop)
+		return 0;
+	if (len < 0 || (len % (int)sizeof(fdt32_t)))
+		return SBI_EINVAL;
+
+	count = len / sizeof(fdt32_t);
+	if (count > max_bits)
+		return SBI_EINVAL;
+
+	for (i = 0; i < (int)count; i++) {
+		val = fdt32_to_cpu(prop[i]);
+		if (val >= max_bits)
+			return SBI_EINVAL;
+		if (mask & (1U << val))
+			return SBI_EINVAL;
+
+		mask |= 1U << val;
+	}
+
+	*out_mask = mask;
+	return 0;
+}
+
 int fdt_parse_cbom_block_size(const void *fdt, int cpu_offset, unsigned long *cbom_block_size)
 {
 	int len;
