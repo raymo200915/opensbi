@@ -11,11 +11,17 @@
 #ifndef __FDT_DOMAIN_H__
 #define __FDT_DOMAIN_H__
 
+#include <sbi/sbi_error.h>
 #include <sbi/sbi_types.h>
 
 #ifdef CONFIG_FDT_DOMAIN
 
 struct sbi_domain;
+
+struct fdt_find_domain_offset_info {
+	const char *name;
+	int domain_offset;
+};
 
 /**
  * Iterate over each domains in device tree
@@ -44,6 +50,8 @@ int fdt_iterate_each_memregion(void *fdt, int domain_offset, void *opaque,
 			       int (*fn)(void *fdt, int domain_offset,
 					 int region_offset, u32 region_access,
 					 void *opaque));
+
+int fdt_find_domain_offset(const void *fdt, const struct sbi_domain *dom);
 
 /**
  * Fix up the domain configuration in the device tree
@@ -76,6 +84,11 @@ int fdt_domains_populate(const void *fdt);
 
 static inline void fdt_domain_fixup(void *fdt) { }
 static inline int fdt_domains_populate(const void *fdt) { return 0; }
+static inline int fdt_find_domain_offset(const void *fdt,
+					 const struct sbi_domain *dom)
+{
+	return SBI_ENOENT;
+}
 
 #endif
 
