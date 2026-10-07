@@ -501,21 +501,28 @@ static int __fdt_parse_mpxy_sysirq_node(const void *fdt, int nodeoff)
 		return SBI_EINVAL;
 
 	val = fdt_getprop(fdt, nodeoff, "opensbi,mpxy-channel-id", &len);
-	if (!val || len != sizeof(*val))
+	if (!val || len != sizeof(*val)) {
+		sbi_printf("[SYSIRQ] missing opensbi,mpxy-channel-id\n");
 		return SBI_EINVAL;
+	}
 	channel_id = fdt32_to_cpu(*val);
 
 	val = fdt_getprop(fdt, nodeoff, "opensbi,domain", &len);
-	if (!val || len != sizeof(*val))
+	if (!val || len != sizeof(*val)) {
+		sbi_printf("[SYSIRQ] missing opensbi,domain\n");
 		return SBI_EINVAL;
+	}
 
 	doff = fdt_node_offset_by_phandle(fdt, fdt32_to_cpu(*val));
 	if (doff < 0)
 		return doff;
 
 	dom = sbi_domain_find_by_name(fdt_get_name(fdt, doff, NULL));
-	if (!dom)
+	if (!dom) {
+		sbi_printf("[SYSIRQ] domain not found for node %s\n",
+			   fdt_get_name(fdt, doff, NULL));
 		return SBI_ENOENT;
+	}
 	dom->virq_seip_notify = true;
 
 	/* Pre-allocate VIRQ map based on interrupts-extended count */

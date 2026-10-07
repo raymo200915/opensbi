@@ -122,6 +122,7 @@ int sbi_virq_route_add(struct sbi_domain *dom, u32 chip_uid, u32 hwirq,
 		if (g_router.rules[i].chip_uid == chip_uid &&
 		    g_router.rules[i].hwirq == hwirq) {
 			spin_unlock(&g_router.lock);
+			sbi_printf("[VIRQ] duplicate route for hwirq %u\n", hwirq);
 			return SBI_EALREADY;
 		}
 	}
@@ -140,6 +141,9 @@ int sbi_virq_route_add(struct sbi_domain *dom, u32 chip_uid, u32 hwirq,
 	g_router.cnt++;
 
 	spin_unlock(&g_router.lock);
+
+	sbi_printf("[VIRQ] add route rule: hwirq %u route to dom (%s)\n",
+		   hwirq, dom->name);
 
 	return SBI_OK;
 }
@@ -493,6 +497,8 @@ int sbi_virq_map_one(u32 channel_id, u32 chip_uid, u32 hwirq,
 	rc = forward_find_idx(m, chip_uid, hwirq, &idx);
 	if (!rc) {
 		*out_virq = m->nodes[idx].virq;
+		sbi_printf("[VIRQ] found existing mapping: (hwirq %u, chip_uid %u) -> virq %u\n",
+			   hwirq, chip_uid, *out_virq);
 		spin_unlock(&m->lock);
 		return 0;
 	}
@@ -565,6 +571,8 @@ int sbi_virq_map_one(u32 channel_id, u32 chip_uid, u32 hwirq,
 	m->nodes_cnt++;
 
 	*out_virq = virq;
+	sbi_printf("[VIRQ] new mapping: (hwirq %u, chip_uid %u) -> VIRQ %u\n",
+		   hwirq, chip_uid, virq);
 	spin_unlock(&m->lock);
 
 	return SBI_OK;
@@ -637,6 +645,8 @@ int sbi_virq_map_set(u32 channel_id, u32 chip_uid, u32 hwirq, u32 virq)
 	m->nodes[m->nodes_cnt].hwirq = hwirq;
 	m->nodes[m->nodes_cnt].virq = virq;
 	m->nodes_cnt++;
+	sbi_printf("[VIRQ] set mapping: (hwirq %u, chip_uid %u) -> VIRQ %u\n",
+		   hwirq, chip_uid, virq);
 	spin_unlock(&m->lock);
 
 	return SBI_OK;
@@ -854,12 +864,17 @@ int sbi_virq_enqueue(struct sbi_virq_courier_binding *c)
 	if (!st)
 		return SBI_ENODEV;
 
+	sbi_printf("[VIRQ] Get queue for (domain,hartidx): (%s,%u)\n",
+		   c->dom->name, sbi_hartid_to_hartindex(current_hartid()));
+
 	spin_lock(&st->lock);
 	if (q_full(st)) {
 		spin_unlock(&st->lock);
+		sbi_printf("[VIRQ] drop VIRQ %u (queue full)\n", c->virq);
 		return SBI_ENOSPC;
 	}
 
+	sbi_printf("[VIRQ] Push VIRQ %d to queue\n", c->virq);
 	st->q[st->tail].virq = c->virq;
 	st->q[st->tail].channel_id = c->channel_id;
 	st->q[st->tail].hwirq = c->hwirq;
@@ -910,6 +925,9 @@ int sbi_virq_claim_thishart(u32 channel_id, u32 *virqs, u32 max_count,
 		st->tail = (st->tail + VIRQ_QSIZE - 1) % VIRQ_QSIZE;
 		st->claimed_count++;
 		spin_unlock(&st->lock);
+		sbi_printf("[VIRQ] CLAIM dequeue: dom=%s hart=%u ch=%u VIRQ=%u\n",
+			   dom->name, current_hartid(), channel_id,
+			   virqs[count - 1]);
 	}
 
 	spin_lock(&st->lock);
@@ -985,6 +1003,8 @@ void sbi_virq_return_to_prev_if_needed(void)
 	if (!do_return)
 		return;
 
+	sbi_printf("[VIRQ] return_to_prev after VIRQ queue drained on hart%lu\n",
+		   (unsigned long)current_hartindex());
 	sbi_domain_context_request_return_to_prev();
 }
 
@@ -1008,12 +1028,19 @@ int sbi_virq_courier_handler(u32 hwirq, void *opaque)
 		return SBI_EINVAL;
 
 	curr_dom = sbi_domain_thishart_ptr();
+	sbi_printf("[VIRQ] virq courier hart%lu curr=%s target=%s hwirq=%u\n",
+		   (unsigned long)current_hartindex(),
+		   curr_dom ? curr_dom->name : "?", dom->name, hwirq);
 
 	/* Allocate/Get a stable VIRQ for (chip_uid, hwirq). */
 	rc = sbi_virq_map_one(channel_id, ctx->chip->id, hwirq,
 			      false, 0, &virq);
 	if (rc)
 		return rc;
+
+	sbi_printf("[VIRQ] route hwirq %u, chip_uid %u -> dom (%s), channel %u, VIRQ %u\n",
+		   hwirq, ctx->chip->id, dom->name, channel_id,
+		   virq);
 
 	/*
 	 * Mask to avoid level-trigger storm before S-mode clears device source.
@@ -1043,16 +1070,26 @@ int sbi_virq_courier_handler(u32 hwirq, void *opaque)
 	 * live CSR only if needed (covers already-initialized targets).
 	 */
 	if (dom != curr_dom) {
-		sbi_domain_context_pending_notify_smode(dom, current_hartindex());
+		bool already = sbi_domain_context_pending_notify_smode(
+			dom, current_hartindex());
+		if (!already)
+			sbi_printf("[VIRQ] S-mode pending notify\n");
 
 		/* Mark return_to_prev for VIRQ-driven domain switch. */
 		virq_set_domain_return_flag(dom, true);
+		sbi_printf("[VIRQ] virq courier switching hart%lu %s -> %s\n",
+			   current_hartindex(), curr_dom->name, dom->name);
 		rc = sbi_domain_context_enter(dom);
 		if (rc) {
+			sbi_printf("[VIRQ] virq courier switch failed, rc=%d\n",
+				   rc);
 			/* Switch failed; do not defer EOI */
 			sbi_irqchip_unmask_hwirq(ctx->chip, hwirq);
-			if (ctx->chip->hwirq_eoi)
+			if (ctx->chip->hwirq_eoi) {
+				sbi_printf("[IRQCHIP] Calling EOI, hwirq %u\n",
+					   hwirq);
 				ctx->chip->hwirq_eoi(ctx->chip, hwirq);
+			}
 			return SBI_OK;
 		}
 
@@ -1072,6 +1109,7 @@ int sbi_virq_courier_handler(u32 hwirq, void *opaque)
 				sbi_irqchip_unmask_hwirq(ctx->chip, hwirq);
 				return rc;
 			}
+			sbi_printf("[VIRQ] S-mode notified\n");
 		}
 	} else if (!sbi_irqchip_notify_smode_get()) {
 		rc = sbi_irqchip_notify_smode_set();
@@ -1080,6 +1118,7 @@ int sbi_virq_courier_handler(u32 hwirq, void *opaque)
 			sbi_irqchip_unmask_hwirq(ctx->chip, hwirq);
 			return rc;
 		}
+		sbi_printf("[VIRQ] S-mode notified\n");
 	}
 
 	/*
@@ -1119,6 +1158,9 @@ int sbi_virq_register_courier(struct sbi_irqchip_device *chip, u32 hwirq,
 	rc = sbi_irqchip_set_affinity(chip, hwirq, hartindex);
 	if (!rc)
 		rc = sbi_irqchip_unmask_hwirq(chip, hwirq);
+	if (!rc)
+		sbi_printf("[VIRQ] courier registered: chip=%u hwirq=%u target hartindex=%u\n",
+			   chip->id, hwirq, hartindex);
 	if (rc) {
 		sbi_irqchip_unregister_handler(chip, hwirq, 1);
 		sbi_free(ctx);
@@ -1166,9 +1208,13 @@ int sbi_virq_domain_init(struct sbi_domain *dom)
 	if (dom->virq_priv)
 		return SBI_OK;
 
+	sbi_printf("[VIRQ] Init per-domain VIRQ courier state for %s\n",
+		   dom->name);
+
 	nharts = sbi_virq_platform_hart_count();
 	st_count = dom->possible_harts ?
 		   (u32)sbi_hartmask_weight(dom->possible_harts) : nharts;
+	sbi_printf("[VIRQ] number of harts: %d\n", nharts);
 
 	alloc_size = sizeof(*p) +
 		     nharts * sizeof(p->st_by_hart[0]) +

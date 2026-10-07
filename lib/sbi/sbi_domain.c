@@ -729,6 +729,8 @@ int sbi_domain_register(struct sbi_domain *dom)
 	/* Init per-domain wired-IRQ courier state */
 	rc = sbi_virq_domain_init(dom);
 	if (rc) {
+		sbi_printf("%s: virq init failed for %s (error %d)\n",
+				__func__, dom->name, rc);
 		sbi_list_del(&dom->node);
 		return rc;
 	}

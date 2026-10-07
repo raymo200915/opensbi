@@ -374,8 +374,13 @@ trap_done:
 	if (sbi_mstatus_prev_mode(regs->mstatus) != PRV_M)
 		sbi_sse_process_pending_events(regs);
 
-	if (sbi_domain_context_need_return_to_prev())
-		sbi_domain_context_exit_to_prev();
+	if (sbi_domain_context_need_return_to_prev()) {
+		int rc = sbi_domain_context_exit_to_prev();
+
+		if (rc && rc != SBI_ENOENT)
+			sbi_printf("return_to_prev failed, rc=%d\n",
+				   rc);
+	}
 
 	if (sbi_domain_context_consume_switched()) {
 		struct sbi_trap_context *newctx = sbi_trap_get_context(scratch);
