@@ -12,6 +12,7 @@
 
 #include <sbi/sbi_types.h>
 #include <sbi/sbi_domain.h>
+#include <sbi/sbi_irqchip.h>
 
 struct fdt_match {
 	const char *compatible;
@@ -37,6 +38,22 @@ struct platform_uart_data {
 int fdt_parse_phandle_with_args(const void *fdt, int nodeoff,
 				const char *prop, const char *cells_prop,
 				int index, struct fdt_phandle_args *out_args);
+
+/*
+ * Parse one entry from "interrupts-extended" and return irqchip device,
+ * hwirq, and optional flags.
+ *
+ * @index: entry index within interrupts-extended
+ * @out_flags_count: in/out, on input capacity of out_flags array;
+ *                   on output number of flags returned (or total flags
+ *                   if out_flags is NULL).
+ */
+int fdt_parse_interrupts_extended_entry(const void *fdt, int nodeoff,
+					int index,
+					struct sbi_irqchip_device **out_chip,
+					u32 *out_hwirq,
+					u32 *out_flags,
+					u32 *out_flags_count);
 
 int fdt_get_node_addr_size(const void *fdt, int node, int index,
 			   uint64_t *addr, uint64_t *size);
