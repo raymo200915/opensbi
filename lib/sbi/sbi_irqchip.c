@@ -14,6 +14,7 @@
 #include <sbi/sbi_list.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
+#include <sbi/riscv_asm.h>
 
 /** Internal irqchip hardware interrupt data */
 struct sbi_irqchip_hwirq_data {
@@ -191,9 +192,8 @@ int sbi_irqchip_raw_handler_default(struct sbi_irqchip_device *chip, u32 hwirq)
 	if (h->callback)
 		rc = h->callback(hwirq, h->priv);
 
-	if (chip->hwirq_eoi)
+	if (chip->hwirq_eoi && rc != SBI_EALREADY)
 		chip->hwirq_eoi(chip, hwirq);
-
 	return rc;
 }
 
@@ -471,6 +471,7 @@ int sbi_irqchip_unregister_handler(struct sbi_irqchip_device *chip,
 	}
 
 	sbi_list_del(&fh->node);
+	sbi_free(fh);
 	return 0;
 }
 
@@ -617,4 +618,20 @@ skip_migrate:
 	hd = sbi_scratch_thishart_offset_ptr(irqchip_hart_data_off);
 	if (hd && hd->chip && hd->chip->process_hwirqs)
 		csr_clear(CSR_MIE, MIP_MEIP);
+}
+
+int sbi_irqchip_notify_smode_set(void)
+{
+	csr_set(CSR_MIP, MIP_SEIP);
+	return 0;
+}
+
+void sbi_irqchip_notify_smode_clear(void)
+{
+	csr_clear(CSR_MIP, MIP_SEIP);
+}
+
+bool sbi_irqchip_notify_smode_get(void)
+{
+	return !!(csr_read(CSR_MIP) & MIP_SEIP);
 }
