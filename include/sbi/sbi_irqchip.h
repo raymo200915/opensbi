@@ -172,4 +172,13 @@ void sbi_irqchip_exit(struct sbi_scratch *scratch);
 bool sbi_irqchip_is_hwirq_enabled(struct sbi_irqchip_device *chip,
 				   u32 hwirq);
 
+/** Notify S-mode for a pending virtual interrupt on this hart. */
+int sbi_irqchip_notify_smode_set(void);
+
+/** Clear S-mode notification for virtual interrupts on this hart. */
+void sbi_irqchip_notify_smode_clear(void);
+
+/** Read S-mode notification state for virtual interrupts on this hart. */
+bool sbi_irqchip_notify_smode_get(void);
+
 #endif
