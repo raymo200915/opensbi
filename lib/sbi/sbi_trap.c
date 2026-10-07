@@ -25,6 +25,7 @@
 #include <sbi/sbi_sse.h>
 #include <sbi/sbi_timer.h>
 #include <sbi/sbi_trap.h>
+#include <sbi/sbi_domain_context.h>
 
 static void sbi_trap_error_one(const struct sbi_trap_context *tcntx,
 			       const char *prefix, u32 hartid, u32 depth)
@@ -372,6 +373,16 @@ trap_done:
 
 	if (sbi_mstatus_prev_mode(regs->mstatus) != PRV_M)
 		sbi_sse_process_pending_events(regs);
+
+	if (sbi_domain_context_need_return_to_prev())
+		sbi_domain_context_exit_to_prev();
+
+	if (sbi_domain_context_consume_switched()) {
+		struct sbi_trap_context *newctx = sbi_trap_get_context(scratch);
+
+		sbi_trap_set_context(scratch, newctx->prev_context);
+		return newctx;
+	}
 
 	sbi_trap_set_context(scratch, tcntx->prev_context);
 	return tcntx;
