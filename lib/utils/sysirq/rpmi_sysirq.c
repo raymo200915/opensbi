@@ -37,7 +37,7 @@ static SBI_LIST_HEAD(sysirq_channels);
 
 static int sysirq_complete_batch(struct rpmi_sysirq_channel *sc,
 				 struct rpmi_sysirq_target *target,
-				 u32 *completed)
+				 const char *via, u32 *completed)
 {
 	u32 irq;
 	int rc;
@@ -49,6 +49,9 @@ static int sysirq_complete_batch(struct rpmi_sysirq_channel *sc,
 			return rc;
 		target->count--;
 		(*completed)++;
+		sbi_printf("[SYSIRQ] complete via %s: dom=%s hart=%u ch=%u VIRQ=%u EOI/unmask\n",
+			   via, sc->channel.owner_domain->name, current_hartid(),
+			   sc->channel.channel_id, irq);
 	}
 	return SBI_OK;
 }
@@ -79,11 +82,13 @@ int rpmi_sysirq_complete_thishart(u32 *completed)
 	sbi_list_for_each_entry(sc, &sysirq_channels, node) {
 		if (sc->channel.owner_domain != dom)
 			continue;
-		rc = sysirq_complete_batch(sc, &sc->targets[index], completed);
+		rc = sysirq_complete_batch(sc, &sc->targets[index], "YIELD", completed);
 		if (rc)
 			return rc;
 	}
 
+	sbi_printf("[YIELD] domain=%s hart=%u completed=%u; checking drained return\n",
+		   dom->name, current_hartid(), *completed);
 	/* Only consider return once every owned channel completed successfully. */
 	sbi_list_for_each_entry(sc, &sysirq_channels, node) {
 		if (sc->channel.owner_domain == dom && sc->ops->drained)
@@ -206,7 +211,7 @@ static int sysirq_send_message(struct sbi_mpxy_channel *channel,
 		if (max_count > array_size(target->claimed))
 			max_count = array_size(target->claimed);
 		/* A new CLAIM follows device handling of the previous batch. */
-		rc = sysirq_complete_batch(sc, target, &completed);
+		rc = sysirq_complete_batch(sc, target, "CLAIM", &completed);
 		if (rc) {
 			status = RPMI_ERR_FAILED;
 			goto done;
