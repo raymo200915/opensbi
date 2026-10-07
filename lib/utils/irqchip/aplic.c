@@ -13,6 +13,8 @@
 #include <sbi/sbi_domain.h>
 #include <sbi/sbi_error.h>
 #include <sbi/sbi_heap.h>
+#include <sbi/sbi_scratch.h>
+#include <sbi/sbi_virq.h>
 #include <sbi_utils/irqchip/aplic.h>
 
 #define APLIC_MAX_IDC			(1UL << 14)
@@ -426,7 +428,7 @@ static int aplic_process_hwirqs(struct sbi_irqchip_device *chip)
 			continue;
 
 		tmp = sbi_irqchip_process_hwirq(chip, hwirq);
-		if (tmp)
+		if (tmp && tmp != SBI_EALREADY)
 			rc = tmp;
 	}
 
@@ -549,6 +551,19 @@ static int aplic_setup_msi(struct aplic_data *aplic, u32 hwirq)
 	return 0;
 }
 
+static void aplic_set_target(struct sbi_irqchip_device *chip, u32 hwirq,
+			     u32 idc_index)
+{
+	struct aplic_data *aplic = container_of(chip, struct aplic_data, irqchip);
+
+	aplic_target_write(aplic, hwirq, APLIC_TARGET_HART_IDX(idc_index) |
+			   APLIC_TARGET_IPRIO(APLIC_DEFAULT_PRIORITY));
+	aplic_idc_write(aplic, idc_index, APLIC_IDC_IDELIVERY,
+			APLIC_ENABLE_IDELIVERY);
+	aplic_idc_write(aplic, idc_index, APLIC_IDC_ITHRESHOLD,
+			APLIC_ENABLE_ITHRESHOLD);
+}
+
 static int aplic_hwirq_setup(struct sbi_irqchip_device *chip,
 			     u32 hwirq, u32 hwirq_flags)
 {
@@ -637,7 +652,7 @@ static int aplic_hwirq_set_affinity(struct sbi_irqchip_device *chip,
 		return SBI_EINVAL;
 
 	aplic_target_write(aplic, hwirq,
-			   APLIC_TARGET_HART_IDX(hart_index) |
+			   APLIC_TARGET_HART_IDX(idc_index) |
 			   APLIC_TARGET_IPRIO(APLIC_DEFAULT_PRIORITY));
 
 	return 0;
@@ -675,6 +690,44 @@ static struct sbi_irqchip_device aplic_irqchip_template = {
 	.hwirq_mask			= aplic_hwirq_mask,
 	.hwirq_unmask		= aplic_hwirq_unmask,
 };
+
+int aplic_init_virq_courier(struct aplic_data *aplic, u32 hwirq,
+			    u32 hwirq_flags)
+{
+	u32 irq, hartindex = current_hartindex();
+	int idc_idx;
+	int rc;
+
+	if (!aplic || !aplic->targets_mmode || !aplic_is_direct_mode(aplic))
+		return SBI_ENOTSUPP;
+	if (!hwirq || hwirq > aplic->num_source)
+		return SBI_EINVAL;
+
+	if (!sbi_virq_is_inited()) {
+		rc = sbi_virq_init(aplic->num_source);
+		if (rc)
+			return rc;
+	}
+
+	for (irq = 1; irq <= aplic->num_source; irq++) {
+		u32 hartidx;
+
+		if (!aplic->hwirq_target_hartindex)
+			break;
+		hartidx = aplic->hwirq_target_hartindex[irq];
+		if (hartidx == -1U)
+			continue;
+		idc_idx = aplic_find_idc_index(aplic, hartidx);
+		if (idc_idx < 0)
+			return SBI_EINVAL;
+		aplic_set_target(&aplic->irqchip, irq, idc_idx);
+	}
+	if (aplic->hwirq_target_hartindex &&
+	    aplic->hwirq_target_hartindex[hwirq] != -1U)
+		hartindex = aplic->hwirq_target_hartindex[hwirq];
+	return sbi_virq_register_courier(&aplic->irqchip, hwirq, hwirq_flags,
+					hartindex);
+}
 
 int aplic_cold_irqchip_init(struct aplic_data *aplic)
 {
