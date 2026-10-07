@@ -128,6 +128,9 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	current_dom = ctx->dom;
 	target_dom = dom_ctx->dom;
 
+	sbi_printf("[domain] switch hart%u %s -> %s (mideleg=0x%lx)\n",
+		   hartindex, current_dom->name, target_dom->name,
+		   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
 	/* Assign current hart to target domain */
 	spin_lock(&current_dom->assigned_harts_lock);
 	sbi_hartmask_clear_hartindex(hartindex, &current_dom->assigned_harts);
@@ -214,6 +217,9 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 
 	/* If target domain context is not initialized or runnable */
 	if (!dom_ctx->initialized) {
+		sbi_printf("[domain] first-entry %s on hart%u (mideleg=0x%lx)\n",
+			   target_dom->name, hartindex,
+			   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
 		/* Startup boot HART of target domain */
 		if (current_hartid() == target_dom->boot_hartid)
 			sbi_hart_switch_mode(target_dom->boot_hartid,
@@ -385,6 +391,11 @@ int sbi_domain_context_exit_to_prev(void)
 	 * so its context is runnable even if not marked initialized.
 	 */
 	dom_ctx->initialized = true;
+
+	sbi_printf("[domain] return hart%lu %s -> %s (mideleg=0x%lx)\n",
+		   (unsigned long)current_hartindex(),
+		   ctx->dom->name, dom_ctx->dom->name,
+		   misa_extension('S') ? csr_read(CSR_MIDELEG) : 0UL);
 
 	/* Clear prev context to avoid unintended re-entry */
 	ctx->prev_ctx = NULL;

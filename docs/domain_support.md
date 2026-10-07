@@ -449,3 +449,13 @@ On a completion failure, Yield returns an SBI error without requesting a
 switch, retaining the failed and remaining completion records for retry.
 Already completed IRQs are not rolled back; the completed count in `a1`
 reports progress even on error.
+
+Demo logs identify physical IRQ completion as `complete via CLAIM` or
+`complete via YIELD`, followed by the channel and VIRQ. A `[YIELD]` summary
+reports the number completed; existing domain return logs show any switch.
+
+`APLIC_QEMU_VIRQ_TEST=y` enables the QEMU-specific CLAIMI and pending-clear
+workarounds for courier tests. It does not enable courier registration;
+SYSIRQ DT entries configure delivery in normal builds as well.
+`APLIC_QEMU_WIRED_TEST=y` instead enables the standalone M-mode UART demo.
+Do not combine that wired demo with a SYSIRQ node owning the same UART IRQ.
