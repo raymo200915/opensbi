@@ -226,6 +226,7 @@ enum rpmi_servicegroup_id {
 	RPMI_SRVGRP_PERFORMANCE = 0x0000A,
 	RPMI_SRVGRP_MANAGEMENT_MODE = 0x000B,
 	RPMI_SRVGRP_LOGGING = 0x000E,
+	RPMI_SRVGRP_SYSTEM_IRQ = 0x000F,
 	RPMI_SRVGRP_ID_MAX_COUNT,
 
 	/* Reserved range for service groups */
@@ -288,6 +289,30 @@ struct rpmi_base_get_platform_info_resp {
 	s32 status;
 	u32 plat_info_len;
 	char plat_info[];
+};
+
+/** RPMI System IRQ ServiceGroup Service IDs */
+enum rpmi_sysirq_service_id {
+	RPMI_SYSIRQ_SRV_ENABLE_NOTIFICATION = 0x01,
+	RPMI_SYSIRQ_SRV_GET_ATTRIBUTES = 0x02,
+	RPMI_SYSIRQ_SRV_GET_TARGET_ATTRIBUTES = 0x03,
+	RPMI_SYSIRQ_SRV_GET_IRQ_ATTRIBUTES = 0x04,
+	RPMI_SYSIRQ_SRV_SET_IRQ_STATE = 0x05,
+	RPMI_SYSIRQ_SRV_GET_IRQ_STATE = 0x06,
+	RPMI_SYSIRQ_SRV_SET_IRQ_TARGET = 0x07,
+	RPMI_SYSIRQ_SRV_GET_IRQ_TARGET = 0x08,
+	RPMI_SYSIRQ_SRV_CLAIM = 0x09,
+	RPMI_SYSIRQ_SRV_ID_MAX_COUNT,
+};
+
+struct rpmi_sysirq_claim_req {
+	u32 sys_target_index;
+};
+
+struct rpmi_sysirq_claim_resp {
+	s32 status;
+	u32 returned;
+	u32 sys_irq_index[];
 };
 
 /** RPMI System MSI ServiceGroup Service IDs */
