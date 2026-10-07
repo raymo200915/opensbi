@@ -39,6 +39,9 @@
 #define SBI_EXT_FWFT				0x46574654
 #define SBI_EXT_MPXY				0x4D505859
 
+/* SBI extension ID for Yield. */
+#define SBI_EXT_YIELD				0x0800594c
+
 /* SBI function IDs for BASE extension*/
 #define SBI_EXT_BASE_GET_SPEC_VERSION		0x0
 #define SBI_EXT_BASE_GET_IMP_ID			0x1
@@ -121,6 +124,9 @@
 #define SBI_EXT_DBTR_TRIGGER_UNINSTALL	0x5
 #define SBI_EXT_DBTR_TRIGGER_ENABLE	0x6
 #define SBI_EXT_DBTR_TRIGGER_DISABLE	0x7
+
+/* SBI function IDs for the Yield extension. */
+#define SBI_EXT_YIELD_YIELD	0x0
 
 /* SBI function IDs for FW feature extension */
 #define SBI_EXT_FWFT_SET		0x0
