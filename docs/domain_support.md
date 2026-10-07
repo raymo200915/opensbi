@@ -325,3 +325,54 @@ be done:
         ...
     };
 ```
+
+### SYSIRQ Node
+
+The SYSIRQ node describes physical interrupts delivered to a domain through
+an RPMI SYSTEM_IRQ channel over SBI MPXY. It should be placed under the
+domain configuration node.
+
+The DT properties of a SYSIRQ node are as follows:
+
+* **compatible** (Mandatory) - The compatible string of the SYSIRQ node.
+  This DT property should have value *"opensbi,mpxy-sysirq"*.
+* **interrupt-controller** (Optional) - Marks the node as a virtual interrupt
+  controller when it is referenced by other DT nodes.
+* **#interrupt-cells** (Optional) - Must be <1> when the node is used as an
+  interrupt controller. The interrupt specifier is the VIRQ number.
+* **interrupts-extended** (Mandatory) - The physical interrupt sources,
+  specified as <&irqchip hwirq flags> entries.
+* **opensbi,mpxy-channel-id** (Mandatory) - The unique SBI MPXY channel ID.
+  Each channel has its own VIRQ namespace.
+* **opensbi,domain** (Mandatory) - The phandle of the destination domain
+  instance node.
+
+Each interrupts-extended entry maps a physical interrupt to a VIRQ number
+starting from zero, in entry order. All entries in the node belong to the
+specified domain, and physical delivery targets its boot HART. The current
+registration path supports wired M-mode interrupt controllers with masking
+and affinity operations. The interrupt controller must be configured to
+deliver these sources to M-mode rather than delegate them to S-mode.
+
+OpenSBI establishes the channel mappings and routing rules before enabling
+physical delivery. It notifies the destination domain through SEIP and
+switches to that domain if required. The payload claims pending interrupts
+through SYSIRQ_CLAIM and handles the device sources before completing them
+through the next CLAIM or the optional Yield ECALL. Return to a previously
+interrupted domain is permitted only after pending and claimed interrupts
+are drained. This completion and return-switch convention is specific to
+OpenSBI's domain courier.
+
+For example, the following node maps physical interrupt 10 to VIRQ 0 in
+channel 4 and delivers it to the boot HART of tdomain:
+
+```dts
+sysirq {
+    compatible = "opensbi,mpxy-sysirq";
+    interrupt-controller;
+    #interrupt-cells = <1>;
+    opensbi,mpxy-channel-id = <4>;
+    opensbi,domain = <&tdomain>;
+    interrupts-extended = <&aplic_m 10 4>;
+};
+```
