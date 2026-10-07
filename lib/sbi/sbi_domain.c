@@ -930,6 +930,9 @@ int sbi_domain_finalize(struct sbi_scratch *scratch)
 
 	/* Select stable boot HARTs before programming physical IRQ targets. */
 	domain_select_boot_harts();
+	rc = sbi_virq_setup_couriers();
+	if (rc)
+		return rc;
 
 	/*
 	 * Set the finalized flag so that the root domain

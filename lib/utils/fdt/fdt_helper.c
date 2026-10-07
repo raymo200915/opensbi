@@ -10,6 +10,7 @@
 #include <sbi/riscv_asm.h>
 #include <sbi/sbi_console.h>
 #include <sbi/sbi_hartmask.h>
+#include <sbi/sbi_irqchip.h>
 #include <sbi/sbi_platform.h>
 #include <sbi/sbi_scratch.h>
 #include <sbi/sbi_hart.h>
@@ -47,6 +48,8 @@ int fdt_parse_phandle_with_args(const void *fdt, int nodeoff,
 	list = fdt_getprop(fdt, nodeoff, prop, &len);
 	if (!list)
 		return SBI_ENOENT;
+	if (len % sizeof(*list))
+		return SBI_EINVAL;
 	list_end = list + (len / sizeof(*list));
 
 	while (list < list_end) {
@@ -57,13 +60,13 @@ int fdt_parse_phandle_with_args(const void *fdt, int nodeoff,
 		list++;
 
 		val = fdt_getprop(fdt, pnodeoff, cells_prop, &len);
-		if (!val)
-			return SBI_ENOENT;
+		if (!val || len != sizeof(*val))
+			return SBI_EINVAL;
 		pcells = fdt32_to_cpu(*val);
 		if (FDT_MAX_PHANDLE_ARGS < pcells)
 			return SBI_EINVAL;
 		if (list + pcells > list_end)
-			return SBI_ENOENT;
+			return SBI_EINVAL;
 
 		if (index > 0) {
 			list += pcells;
@@ -78,6 +81,54 @@ int fdt_parse_phandle_with_args(const void *fdt, int nodeoff,
 	}
 
 	return SBI_ENOENT;
+}
+
+int fdt_parse_interrupts_extended_entry(const void *fdt, int nodeoff,
+					int index,
+					struct sbi_irqchip_device **out_chip,
+					u32 *out_hwirq,
+					u32 *out_flags,
+					u32 *out_flags_count)
+{
+	struct fdt_phandle_args args;
+	struct sbi_irqchip_device *chip;
+	u32 flags_cap = 0, flags_cnt = 0;
+	int rc, i;
+
+	if (!fdt || nodeoff < 0)
+		return SBI_EINVAL;
+
+	rc = fdt_parse_phandle_with_args(fdt, nodeoff, "interrupts-extended",
+					 "#interrupt-cells", index, &args);
+	if (rc)
+		return rc;
+
+	if (args.args_count < 1)
+		return SBI_EINVAL;
+
+	if (out_hwirq)
+		*out_hwirq = args.args[0];
+
+	if (out_flags_count) {
+		flags_cap = *out_flags_count;
+		flags_cnt = (args.args_count > 1) ? (args.args_count - 1) : 0;
+		*out_flags_count = flags_cnt;
+		if (out_flags && flags_cap < flags_cnt)
+			return SBI_EBAD_RANGE;
+		if (out_flags) {
+			for (i = 0; i < (int)flags_cnt; i++)
+				out_flags[i] = args.args[i + 1];
+		}
+	}
+
+	if (out_chip) {
+		chip = sbi_irqchip_find_device((u32)args.node_offset);
+		if (!chip)
+			return SBI_ENODEV;
+		*out_chip = chip;
+	}
+
+	return 0;
 }
 
 static int fdt_translate_address(const void *fdt, uint64_t reg, int parent,
