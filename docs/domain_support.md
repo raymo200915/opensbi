@@ -325,3 +325,127 @@ be done:
         ...
     };
 ```
+
+### RPMI SYSTEM_IRQ Delivery Through MPXY
+
+The domain configuration can contain SYSIRQ nodes, often labeled
+`rpmi_sysirq_intc` in DTS overlays. OpenSBI matches the compatible string,
+not the node name or label. The binding properties are:
+
+| Property | Requirement | Meaning |
+|:---------|:------------|:--------|
+| `compatible` | Mandatory | `"opensbi,mpxy-sysirq"` |
+| `interrupt-controller` | For interrupt-controller references | Marks the virtual interrupt controller |
+| `#interrupt-cells` | For interrupt-controller references | `<1>`: the VIRQ index |
+| `interrupts-extended` | Mandatory | Physical sources as `<&irqchip hwirq flags>` |
+| `opensbi,mpxy-channel-id` | Mandatory | Unique MPXY channel and VIRQ namespace |
+| `opensbi,domain` | Mandatory | Phandle to the destination domain |
+
+An entry's position assigns its zero-based VIRQ number in the channel.
+The referenced irqchip identifies the physical controller; `opensbi,domain`
+selects the destination for every entry in that node. Thus the mapping is
+`(channel-id, VIRQ index) -> (irqchip, HWIRQ)`, while the routing selects the
+destination domain and its boot hart.
+
+OpenSBI initializes VIRQ on demand, establishes all channel mappings and
+routing rules, and then registers courier handlers using the physical IRQ
+flags. Physical delivery targets the owning domain's boot hart. The current
+registration path supports wired M-mode interrupt controllers with masking
+and affinity operations. Delegated sources and unsupported controller paths
+are rejected rather than silently redirected. This initialization does not
+depend on a QEMU demo build flag.
+
+An `opensbi,mpxy-sysirq` node under the domain configuration registers a
+domain-owned SBI MPXY channel backed by OpenSBI's local VIRQ queues. This
+channel does not require an RPMI mailbox or a remote platform controller.
+For example:
+
+```dts
+sysirq {
+    compatible = "opensbi,mpxy-sysirq";
+    interrupt-controller;
+    #interrupt-cells = <1>;
+    opensbi,mpxy-channel-id = <4>;
+    opensbi,domain = <&tdomain>;
+    interrupts-extended = <&aplic_m 10 4>;
+};
+```
+
+The channel ID must be unique. The referenced domain owns the channel, and
+each `interrupts-extended` entry maps its physical interrupt to a zero-based
+SYS_IRQ_INDEX (VIRQ) in entry order. Index zero is valid. Interrupt delivery
+to M-mode still depends on the interrupt-controller configuration; this node
+does not change hardware privilege-level routing.
+
+The channel advertises the RPMI message protocol and SYSTEM_IRQ service group
+`0x000f`, version 2.0, as defined by the
+[SYSTEM_IRQ proposal](https://github.com/riscv-non-isa/riscv-rpmi/pull/150).
+The implemented services are GET_ATTRIBUTES (`0x02`), GET_TARGET_ATTRIBUTES
+(`0x03`), GET_IRQ_ATTRIBUTES (`0x04`), and SYSIRQ_CLAIM (`0x09`). Other service
+IDs return `RPMI_ERR_NOTSUPP`; interrupt state and routing are configured by
+OpenSBI rather than through SET services.
+
+SYS_TARGET_INDEX enumerates the owning domain's `possible-harts` in increasing
+OpenSBI hart-index order. It is not a hart ID. GET_TARGET_ATTRIBUTES reports
+the corresponding hart ID. CLAIM is restricted to the calling hart's target;
+claiming another target returns `RPMI_ERR_DENIED`.
+
+The S-mode payload must configure an SBI MPXY shared-memory region, discover
+the channel and its protocol attributes, and invoke MPXY
+SEND_MESSAGE_WITH_RESPONSE with message ID `0x09`. All numeric payload fields
+are little-endian:
+
+| Payload | Fields |
+|:--------|:-------|
+| Request | `u32 SYS_TARGET_INDEX` |
+| Successful response | `s32 STATUS`, `u32 RETURNED`, `u32 SYS_IRQ_INDEX[RETURNED]` |
+| Error response | `s32 STATUS` |
+
+CLAIM removes pending interrupts for this channel from the calling hart's
+domain queue but leaves their physical sources masked. It returns a
+batch of up to 63 indices. There is no separate COMPLETE service. The payload
+must handle every returned interrupt and clear its device's interrupt source,
+then call CLAIM again until RETURNED is zero. The next valid CLAIM for the same
+channel and target acknowledges/unmasks the previous batch's physical sources
+before collecting new pending interrupts. The optional Yield ECALL can instead
+complete handled batches explicitly. This OpenSBI-specific rearm convention
+prevents a level-triggered source from being delivered again before the payload
+has cleared it; it does not add a COMPLETE service to the RPMI wire protocol.
+
+OpenSBI clears the S-mode notification when the domain queue is empty. A
+nonempty CLAIM response does not return to a previously interrupted domain:
+the payload must first process the returned batch. A subsequent CLAIM with
+RETURNED zero requests the deferred return switch, if one is needed and all
+channels in the domain queue are drained and all claimed sources are rearmed.
+This empty-CLAIM return convention
+is specific to OpenSBI's domain courier, not part of the RPMI wire protocol.
+
+The previous private VIRQ ECALL extension (`0x0900524d`) and its POP/COMPLETE
+operations are no longer registered. Existing payloads using those calls must
+migrate to the MPXY CLAIM loop described above.
+
+### Experimental Yield ECALL
+
+`CONFIG_SBI_ECALL_YIELD` enables the project-local experimental extension
+EID `0x0800594c`, FID `0`. This is not an official SBI assignment. The extension
+is registered when local SYSIRQ channels exist and can be discovered with
+SBI BASE PROBE_EXTENSION. It takes no arguments and ignores argument registers.
+On success, `a0` is zero and `a1` is the number of IRQs completed by the call.
+
+After handling every IRQ in a claimed batch and clearing its device source,
+the payload may invoke Yield instead of relying on the next CLAIM to complete
+that batch. Yield completes all outstanding batches belonging to the current
+domain and calling hart, using the same completion helper as CLAIM. Each
+successful completion removes its record, so mixing Yield and CLAIM or
+repeating Yield without a new batch cannot duplicate EOI/unmask operations.
+Yield does not require an MPXY shared-memory buffer and does not dequeue IRQs.
+
+If pending IRQs remain, Yield returns without switching and the payload must
+continue claiming them. If all pending and claimed IRQs are drained and a VIRQ
+courier return is pending, Yield requests a switch at the end of the ECALL trap.
+The ECALL return state is saved before switching. When the domain is entered
+again, execution resumes after Yield. No previous domain means no switch.
+On a completion failure, Yield returns an SBI error without requesting a
+switch, retaining the failed and remaining completion records for retry.
+Already completed IRQs are not rolled back; the completed count in `a1`
+reports progress even on error.
