@@ -76,6 +76,15 @@ config SBI_ECALL_LEGACY
 	bool "SBI v0.1 legacy extensions"
 	default y
 
+config SBI_ECALL_YIELD
+	bool "Yield extension"
+	default y
+	help
+	  Enable the Yield ECALL extension.
+	  Yield completes the calling domain and hart's claimed SYSIRQs.
+	  A delivery backend may request a context return once work is drained.
+	  Interrupt claiming still uses RPMI SYSTEM_IRQ through SBI MPXY.
+
 config SBI_ECALL_VENDOR
 	bool "Platform-defined vendor extensions"
 	default y
