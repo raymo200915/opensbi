@@ -53,6 +53,9 @@ struct aplic_data {
 
 int aplic_cold_irqchip_init(struct aplic_data *aplic);
 
+int aplic_init_virq_courier(struct aplic_data *aplic, u32 hwirq,
+			    u32 hwirq_flags);
+
 void aplic_reinit_all(void);
 
 #endif
