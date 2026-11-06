@@ -48,6 +48,13 @@ struct hart_context {
 	unsigned long senvcfg;
 	/** Supervisor resource management configuration register */
 	unsigned long srmcfg;
+	/*
+	 * The CFI controls in menvcfg are M-mode CSRs, but they define whether
+	 * the current S-mode domain is subject to landing-pad and shadow-stack
+	 * enforcement. Keep only these controls with the domain context; the
+	 * remaining menvcfg bits retain their firmware-wide semantics.
+	 */
+	u64 menvcfg_cfi;
 
 	/** Reference to the owning domain */
 	struct sbi_domain *dom;
@@ -56,6 +63,8 @@ struct hart_context {
 	/** Is context initialized and runnable */
 	bool initialized;
 };
+
+#define MENVCFG_CFI_CONTEXT_BITS	(ENVCFG_LPE | ENVCFG_SSE)
 
 static struct sbi_domain_data dcpriv;
 
@@ -137,8 +146,18 @@ static int switch_to_next_domain_context(struct hart_context *ctx,
 	ctx->satp	= csr_swap(CSR_SATP, dom_ctx->satp);
 	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_10)
 		ctx->scounteren = csr_swap(CSR_SCOUNTEREN, dom_ctx->scounteren);
-	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12)
-		ctx->senvcfg	= csr_swap(CSR_SENVCFG, dom_ctx->senvcfg);
+	if (sbi_hart_priv_version(scratch) >= SBI_HART_PRIV_VER_1_12) {
+		u64 menvcfg = csr_read64(CSR_MENVCFG);
+
+		/* Save senvcfg while the current domain still owns menvcfg. */
+		ctx->senvcfg = csr_read(CSR_SENVCFG);
+		ctx->menvcfg_cfi = menvcfg & MENVCFG_CFI_CONTEXT_BITS;
+		menvcfg &= ~MENVCFG_CFI_CONTEXT_BITS;
+		menvcfg |= dom_ctx->menvcfg_cfi;
+		csr_write64(CSR_MENVCFG, menvcfg);
+		/* menvcfg.LPE/SSE gates writes of the matching senvcfg bits. */
+		csr_write(CSR_SENVCFG, dom_ctx->senvcfg);
+	}
 	if (sbi_hart_has_extension(scratch, SBI_HART_EXT_SSQOSID))
 		ctx->srmcfg	= csr_swap(CSR_SRMCFG, dom_ctx->srmcfg);
 
